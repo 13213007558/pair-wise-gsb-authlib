@@ -1,0 +1,98 @@
+.. _specs/rfc9126:
+
+RFC9126: OAuth 2.0 Pushed Authorization Requests (PAR)
+======================================================
+
+This section contains the generic implementation of :rfc:`RFC9126 <9126>`.
+
+With Pushed Authorization Requests, the client POSTs the authorization
+request parameters directly to the authorization server, and receives a
+short-lived ``request_uri`` in exchange. The user-agent is then redirected
+to the authorization endpoint with only this ``request_uri`` and the
+``client_id``, so the authorization request data neither transits through
+the browser URL, nor can be tampered with.
+
+The feature is enabled with a single authorization server extension, which
+registers the pushed authorization request endpoint and resolves
+``request_uri`` values on the authorization endpoint::
+
+    from authlib.oauth2 import rfc9126
+
+    server.register_extension(rfc9126.PushedAuthorizationRequest())
+
+The pushed authorization request endpoint is available under the
+``pushed_authorization_request`` endpoint name::
+
+    @app.route("/oauth/par", methods=["POST"])
+    def pushed_authorization_request():
+        return server.create_endpoint_response("pushed_authorization_request")
+
+The endpoint authenticates the client the same way as the token endpoint,
+and validates the pushed parameters with the same rules as the
+authorization endpoint (including grant extensions such as PKCE). JWT
+secured authorization requests (RFC9101 ``request`` objects) are not
+supported by this endpoint.
+
+Storage
+-------
+
+Pushed authorization request data is persisted through a replaceable
+storage interface. The interface distinguishes the non-destructive read
+used to render the consent page (:meth:`~PushedAuthorizationRequestStore.get`)
+from the atomic consumption used when the authorization code is issued
+(:meth:`~PushedAuthorizationRequestStore.consume`), so that refreshing the
+consent page keeps working while a reference can complete the flow only
+once, even concurrently::
+
+    store = MyPushedAuthorizationRequestStore()
+    server.register_extension(rfc9126.PushedAuthorizationRequest(store=store))
+
+Requiring PAR
+-------------
+
+PAR can be enforced per client with the
+``require_pushed_authorization_requests`` client metadata, or server-wide
+with the ``require_pushed_authorization_requests`` server metadata::
+
+    class PushedAuthorizationRequest(rfc9126.PushedAuthorizationRequest):
+        def get_server_metadata(self):
+            return {
+                "pushed_authorization_request_endpoint": "https://as.test/oauth/par",
+                "require_pushed_authorization_requests": True,
+            }
+
+        def get_client_require_pushed_authorization_requests(self, client):
+            return client.client_metadata.get(
+                "require_pushed_authorization_requests", False
+            )
+
+    server.register_extension(PushedAuthorizationRequest())
+
+API Reference
+-------------
+
+.. module:: authlib.oauth2.rfc9126
+
+.. autoclass:: PushedAuthorizationRequest
+    :member-order: bysource
+    :members:
+
+.. autoclass:: PushedAuthorizationRequestEndpoint
+    :member-order: bysource
+    :members:
+
+.. autoclass:: PushedAuthorizationRequestStore
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InMemoryPushedAuthorizationRequestStore
+    :member-order: bysource
+    :members:
+
+.. autoclass:: ClientMetadataClaims
+    :member-order: bysource
+    :members:
+
+.. autoclass:: AuthorizationServerMetadata
+    :member-order: bysource
+    :members:
