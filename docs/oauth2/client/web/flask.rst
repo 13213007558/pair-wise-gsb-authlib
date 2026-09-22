@@ -224,6 +224,15 @@ The ``logout_redirect`` method accepts:
     The ``id_token`` is available in ``token['id_token']`` after calling
     ``authorize_access_token()``.
 
+Back-Channel Logout
+-------------------
+
+For provider-initiated logout without a browser request, implement the
+Back-Channel Logout endpoint described in :doc:`../specs/backchannel`. Register a
+server-side session store and call ``handle_backchannel_logout()`` from a POST
+route. Invalid logout tokens return HTTP 400; storage errors intentionally
+remain errors so the provider knows revocation did not complete.
+
 Examples
 ---------
 

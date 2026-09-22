@@ -11,6 +11,10 @@ Version 1.x.x
 
 **Unreleased**
 
+- Add Flask OpenID Connect client support for OpenID Connect Back-Channel
+  Logout 1.0, including logout token validation, replay-aware session
+  revocation, and a replaceable server-side session store.
+
 - Add support for the Identity Assertion JWT Authorization Grant (ID-JAG),
   a draft extension to :rfc:`7523` for cross-application access using identity
   assertions issued by an external enterprise IdP.

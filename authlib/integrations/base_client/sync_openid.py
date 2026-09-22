@@ -8,9 +8,14 @@ from authlib.common.urls import add_params_to_uri
 from authlib.oidc.core import CodeIDToken
 from authlib.oidc.core import ImplicitIDToken
 from authlib.oidc.core import UserInfo
+from authlib.oidc.backchannel import process_logout_token
 
 
 class OpenIDMixin:
+    def process_backchannel_logout(self, logout_token, store=None, leeway=120):
+        """Validate a logout token and revoke matching server-side sessions."""
+        return process_logout_token(self, logout_token, store=store, leeway=leeway)
+
     def fetch_jwk_set(self, force=False):
         metadata = self.load_server_metadata()
         jwk_set = metadata.get("jwks")

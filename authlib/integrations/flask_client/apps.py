@@ -1,7 +1,9 @@
 from flask import g
+from flask import jsonify
 from flask import redirect
 from flask import request
 from flask import session
+from flask import Response
 
 from ..base_client import BaseApp
 from ..base_client import OAuth1Mixin
@@ -10,6 +12,8 @@ from ..base_client import OAuthError
 from ..base_client import OpenIDMixin
 from ..requests_client import OAuth1Session
 from ..requests_client import OAuth2Session
+from authlib.oidc.backchannel import InvalidLogoutTokenError
+from authlib.oidc.backchannel import SessionIdentityMismatchError
 
 
 class FlaskAppMixin:
@@ -78,6 +82,37 @@ class FlaskOAuth1App(FlaskAppMixin, OAuth1Mixin, BaseApp):
 
 class FlaskOAuth2App(FlaskAppMixin, OAuth2Mixin, OpenIDMixin, BaseApp):
     client_cls = OAuth2Session
+
+    def handle_backchannel_logout(
+        self, logout_token=None, store=None, leeway=120
+    ):
+        """Handle a provider-initiated back-channel logout POST."""
+        if logout_token is None:
+            logout_token = request.form.get("logout_token")
+        if not logout_token:
+            response = jsonify(
+                error="invalid_request",
+                error_description="Missing 'logout_token' parameter.",
+            )
+            response.status_code = 400
+            return response
+
+        try:
+            self.process_backchannel_logout(
+                logout_token, store=store, leeway=leeway
+            )
+        except (
+            InvalidLogoutTokenError,
+            SessionIdentityMismatchError,
+        ) as exc:
+            response = jsonify(
+                error=exc.error,
+                error_description=exc.description,
+            )
+            response.status_code = 400
+            return response
+
+        return Response(status=200, headers={"Cache-Control": "no-store"})
 
     def logout_redirect(
         self, post_logout_redirect_uri=None, id_token_hint=None, **kwargs

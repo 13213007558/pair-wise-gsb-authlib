@@ -202,6 +202,7 @@ class OAuth2Base:
         server_metadata_url=None,
         compliance_fix=None,
         client_auth_methods=None,
+        backchannel_logout_store=None,
         user_agent=None,
         **kwargs,
     ):
@@ -218,6 +219,7 @@ class OAuth2Base:
 
         self.compliance_fix = compliance_fix
         self.client_auth_methods = client_auth_methods
+        self.backchannel_logout_store = backchannel_logout_store
         self._fetch_token = fetch_token
         self._update_token = update_token
         self._user_agent = user_agent or default_user_agent
