@@ -224,6 +224,39 @@ The ``logout_redirect`` method accepts:
     The ``id_token`` is available in ``token['id_token']`` after calling
     ``authorize_access_token()``.
 
++Back-Channel Logout
+-------------------
+
+To receive `OpenID Connect Back-Channel Logout`_ requests, register a
+back-channel logout URI at the provider and point it at the
+`handle_backchannel_logout` method. The OP POSTs a `logout_token`
+directly to this URI, so no browser cookies are available; sessions are
+invalidated server-side through a session store you provide::
+
+    from authlib.oidc.backchannel import InMemoryBackChannelLogoutStore
+
+    session_store = InMemoryBackChannelLogoutStore()
+
+    @app.route('/backchannel-logout', methods=['POST'])
+    def backchannel_logout():
+        return oauth.google.handle_backchannel_logout(session_store)
+
+.. _OpenID Connect Back-Channel Logout: https://openid.net/specs/openid-connect-backchannel-1_0.html
+
+The logout token's signature, issuer, audience, algorithm and time claims
+are validated against the provider metadata before any session is touched.
+The session store is scoped by issuer and client, so a logout only affects
+the matching sessions: with a `sid` claim only that session, with only a
+`sub` claim all of that subject's sessions at this issuer and client.
+
+Processing is idempotent: replayed logout tokens succeed even when the
+sessions are already gone. Exceptions raised by the session store
+propagate (resulting in a 500 response), so the provider is never told a
+logout succeeded when it did not.
+
+See :ref:`specs/backchannel` for the framework-agnostic receiver and the
+session store contract.
+
 Examples
 ---------
 

@@ -1,7 +1,13 @@
+import json
+
+from flask import Response
 from flask import g
 from flask import redirect
 from flask import request
 from flask import session
+from joserfc.errors import JoseError
+
+from authlib.oidc.backchannel import BackChannelLogoutReceiver
 
 from ..base_client import BaseApp
 from ..base_client import OAuth1Mixin
@@ -120,6 +126,67 @@ class FlaskOAuth2App(FlaskAppMixin, OAuth2Mixin, OpenIDMixin, BaseApp):
 
         self.framework.clear_state_data(session, state)
         return state_data
+
+    def handle_backchannel_logout(self, store, leeway=120):
+        """Handle an OpenID Back-Channel Logout request from the OP.
+
+        Use this as the view for the back-channel logout URI registered at
+        the provider. The OP POSTs a `logout_token` directly to this URI;
+        no browser cookies are available, so sessions are invalidated
+        server-side through the application-provided session `store` (a
+        :class:`authlib.oidc.backchannel.BackChannelLogoutStore`)::
+
+            @app.route("/backchannel-logout", methods=["POST"])
+            def backchannel_logout():
+                return oauth.google.handle_backchannel_logout(session_store)
+
+        The logout token's signature, issuer, audience, algorithm and time
+        claims are validated against the provider metadata before any
+        session is touched.
+
+        :param store: Session adapter used to invalidate sessions.
+        :param leeway: Allowed clock skew in seconds for time claims.
+        :return: A Flask response (200 on success, 400 on an invalid token).
+            Exceptions raised by the session store are propagated so the
+            caller knows the logout was not fully processed; do not catch
+            them into a success response.
+        """
+        headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+        logout_token = request.form.get("logout_token")
+        if not logout_token:
+            body = json.dumps(
+                {
+                    "error": "invalid_request",
+                    "error_description": 'Missing "logout_token" parameter',
+                }
+            )
+            return Response(
+                body, status=400, content_type="application/json", headers=headers
+            )
+
+        metadata = self.load_server_metadata()
+        issuer = metadata.get("issuer")
+        if not issuer:
+            raise RuntimeError('Missing "issuer" in metadata')
+
+        receiver = BackChannelLogoutReceiver(
+            store,
+            issuer=issuer,
+            client_id=self.client_id,
+            jwks=self.fetch_jwk_set(),
+            algorithms=metadata.get("id_token_signing_alg_values_supported"),
+            leeway=leeway,
+        )
+        try:
+            receiver.process_logout(logout_token)
+        except JoseError as exc:
+            body = json.dumps(
+                {"error": "invalid_request", "error_description": str(exc)}
+            )
+            return Response(
+                body, status=400, content_type="application/json", headers=headers
+            )
+        return Response(status=200, headers=headers)
 
     def authorize_access_token(self, **kwargs):
         """Fetch access token in one step.
