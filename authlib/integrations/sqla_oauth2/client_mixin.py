@@ -137,6 +137,11 @@ class OAuth2ClientMixin(ClientMixin):
     def check_endpoint_auth_method(self, method, endpoint):
         if endpoint == "token":
             return self.token_endpoint_auth_method == method
+        if endpoint == "pushed_authorization_request":
+            # RFC9126 Section 2.1: the client MUST authenticate to the
+            # pushed authorization request endpoint in the same way as
+            # at the token endpoint
+            return self.token_endpoint_auth_method == method
         # TODO
         return True
 

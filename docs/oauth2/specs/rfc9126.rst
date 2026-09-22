@@ -1,0 +1,105 @@
+.. _specs/rfc9126:
+
+RFC9126: OAuth 2.0 Pushed Authorization Requests
+================================================
+
+This section contains the generic implementation of :rfc:`RFC9126 <9126>`.
+
+Pushed Authorization Requests (PAR) let the client send the authorization
+request parameters directly to the authorization server with a POST
+request, and receive a short-lived ``request_uri`` in exchange. The
+user-agent is then redirected to the authorization endpoint with only
+``client_id`` and ``request_uri``, so the request parameters neither
+appear in the URL nor can be tampered with.
+
+Register the extension on the authorization server, and mount the
+endpoint, e.g. with Flask::
+
+    from authlib.oauth2 import rfc9126
+
+    server.register_extension(rfc9126.PushedAuthorizationRequests())
+
+    @app.route("/oauth/par", methods=["POST"])
+    def par():
+        return server.create_endpoint_response("pushed_authorization_request")
+
+The pushed authorization request endpoint authenticates the client the
+same way as the token endpoint, and validates the pushed parameters with
+the very same rules used by the authorization endpoint (including grant
+extensions such as PKCE). Only plain form parameters are accepted: JWT
+secured authorization requests (RFC9101) are explicitly rejected with
+``request_not_supported`` / ``request_uri_not_supported`` errors.
+
+The pushed data is bound to the client that pushed it. At the
+authorization endpoint, parameters appended to the URL can not override
+the pushed ones. Unknown, expired or cross-client ``request_uri``
+values are rejected with an ``invalid_request_uri`` error.
+
+Storage
+-------
+
+Pushed requests are persisted through a replaceable store interface. The
+store distinguishes reading the request to render the consent page (the
+page can be refreshed) from consuming it when the authorization response
+is finally created (a ``request_uri`` can be consumed only once, even
+concurrently). The default implementation is in-memory; provide your own
+to persist the data, e.g. in a database::
+
+    class MyStore(rfc9126.PushedAuthorizationRequestStore):
+        def save(self, request_uri, client_id, data, expires_at):
+            ...
+
+        def get(self, request_uri):
+            ...
+
+        def consume(self, request_uri):
+            ...
+
+    server.register_extension(rfc9126.PushedAuthorizationRequests(store=MyStore()))
+
+Requiring PAR
+-------------
+
+Clients can declare the ``require_pushed_authorization_requests``
+metadata (see :class:`ClientMetadataClaims`), and the server can require
+PAR for all clients with the ``require_pushed_authorization_requests``
+server metadata (see :class:`AuthorizationServerMetadata`). Authorization
+requests that were not pushed are then rejected.
+
+API Reference
+-------------
+
+.. module:: authlib.oauth2.rfc9126
+
+.. autoclass:: PushedAuthorizationRequests
+    :member-order: bysource
+    :members:
+
+.. autoclass:: PushedAuthorizationRequestEndpoint
+    :member-order: bysource
+    :members:
+
+.. autoclass:: PushedAuthorizationRequestStore
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InMemoryPushedAuthorizationRequestStore
+    :member-order: bysource
+    :members:
+
+.. autoclass:: PushedAuthorizationRequestMixin
+    :member-order: bysource
+    :members:
+
+.. autoclass:: PushedAuthorizationRequestDict
+    :member-order: bysource
+    :members:
+
+.. autoclass:: ClientMetadataClaims
+    :member-order: bysource
+    :members:
+
+.. autoclass:: AuthorizationServerMetadata
+    :member-order: bysource
+    :members:
+
