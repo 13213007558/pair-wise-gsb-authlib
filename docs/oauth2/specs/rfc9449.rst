@@ -1,0 +1,117 @@
+.. _specs/rfc9449:
+
+RFC9449: OAuth 2.0 Demonstrating Proof of Possession (DPoP)
+===========================================================
+
+This section contains the generic implementation of RFC9449_. DPoP is a
+mechanism for sender-constraining OAuth 2.0 tokens: the client proves
+possession of a private key by signing a *DPoP proof* JWT, and the
+authorization server binds the issued access token to the corresponding
+public key (``cnf.jkt``). A stolen DPoP-bound token is useless without
+the private key.
+
+The implementation covers:
+
+- DPoP proof validation with
+  :class:`~authlib.oauth2.rfc9449.DPoPProofValidator`: ``typ``, ``alg``,
+  embedded public ``jwk``, ``jti``, ``iat``, ``htm`` and ``htu`` claims
+  are checked, and ``ath`` is verified on protected resource requests.
+  The proof is self-contained: remote key URLs (``jku``, ``x5u``) are
+  rejected, never fetched.
+- replay detection through the pluggable, atomic
+  :class:`~authlib.oauth2.rfc9449.DPoPReplayStore` interface. The proof
+  ``jti`` is recorded only after every other check (signature included)
+  passed, so a forged proof cannot burn the ``jti`` of a legitimate one.
+- an optional server nonce policy with
+  :class:`~authlib.oauth2.rfc9449.DPoPNonceProvider`. A nonce is not
+  single-use: the same nonce can serve concurrent proofs, replay
+  protection stays based on ``jti``.
+- issuing DPoP-bound JWT access tokens with
+  :class:`~authlib.oauth2.rfc9449.DPoPTokenGenerator`.
+- a DPoP-aware client credentials grant with
+  :class:`~authlib.oauth2.rfc9449.DPoPClientCredentialsGrant`.
+- protecting resource endpoints with
+  :class:`~authlib.oauth2.rfc9449.DPoPTokenValidator`.
+
+.. _RFC9449: https://www.rfc-editor.org/rfc/rfc9449.html
+
+Authorization server
+--------------------
+
+Register the grant and the token generator on the authorization server,
+and configure the proof validator::
+
+    from authlib.oauth2.rfc9449 import DPoPClientCredentialsGrant
+    from authlib.oauth2.rfc9449 import DPoPProofValidator
+    from authlib.oauth2.rfc9449 import DPoPTokenGenerator
+
+    class MyDPoPTokenGenerator(DPoPTokenGenerator):
+        def get_jwks(self):
+            return load_jwks("jwks.json")
+
+    server.register_grant(DPoPClientCredentialsGrant)
+    server.register_token_generator(
+        "default", MyDPoPTokenGenerator(issuer="https://as.example.org")
+    )
+    server.dpop_proof_validator = DPoPProofValidator(
+        max_age=300,
+        replay_store=MyReplayStore(),
+    )
+
+The token endpoint then requires a valid ``DPoP`` proof header and
+issues tokens with ``token_type`` ``DPoP``.
+
+Resource server
+---------------
+
+Register the validator on the resource protector::
+
+    from authlib.oauth2.rfc9449 import DPoPTokenValidator
+
+    class MyDPoPTokenValidator(DPoPTokenValidator):
+        def get_jwks(self):
+            return load_jwks("jwks.json")
+
+    require_oauth.register_token_validator(
+        MyDPoPTokenValidator(issuer="https://as.example.org")
+    )
+
+Protected requests must carry ``Authorization: DPoP <token>`` together
+with a fresh ``DPoP`` proof header bound to the token via ``ath``.
+
+API Reference
+-------------
+
+.. module:: authlib.oauth2.rfc9449
+
+.. autoclass:: DPoPProofValidator
+    :member-order: bysource
+    :members:
+
+.. autoclass:: DPoPProof
+    :member-order: bysource
+    :members:
+
+.. autoclass:: DPoPReplayStore
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InMemoryDPoPReplayStore
+    :member-order: bysource
+    :members:
+
+.. autoclass:: DPoPNonceProvider
+    :member-order: bysource
+    :members:
+
+.. autoclass:: DPoPTokenGenerator
+    :member-order: bysource
+    :members:
+
+.. autoclass:: DPoPClientCredentialsGrant
+    :member-order: bysource
+    :members:
+
+.. autoclass:: DPoPTokenValidator
+    :member-order: bysource
+    :members:

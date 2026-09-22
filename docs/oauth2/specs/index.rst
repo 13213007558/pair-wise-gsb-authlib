@@ -18,5 +18,6 @@ Specifications
     rfc9068
     rfc9101
     rfc9207
+    rfc9449
     oidc
     rpinitiated
