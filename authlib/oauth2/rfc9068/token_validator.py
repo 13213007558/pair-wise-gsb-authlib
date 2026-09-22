@@ -147,6 +147,16 @@ class JWTBearerTokenValidator(BearerTokenValidator):
         if self.scope_insufficient(token.get("scope", []), scopes):
             raise InsufficientScopeError()
 
+        # RFC 9449: a DPoP-bound access token (cnf.jkt) MUST NOT be
+        # accepted as a Bearer token; it requires a DPoP proof.
+        cnf = token.get("cnf")
+        if self.TOKEN_TYPE == "bearer" and isinstance(cnf, dict) and cnf.get("jkt"):
+            raise InvalidTokenError(
+                description="DPoP-bound access tokens require a DPoP proof.",
+                realm=self.realm,
+                extra_attributes=self.extra_attributes,
+            )
+
         # Many authorization servers embed authorization attributes that go beyond the
         # delegated scenarios described by [RFC7519] in the access tokens they issue.
         # Typical examples include resource owner memberships in roles and groups that

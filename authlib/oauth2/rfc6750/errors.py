@@ -33,6 +33,9 @@ class InvalidTokenError(OAuth2Error):
     )
     status_code = 401
 
+    #: scheme used in the WWW-Authenticate challenge
+    AUTH_SCHEME = "Bearer"
+
     def __init__(
         self,
         description=None,
@@ -67,7 +70,7 @@ class InvalidTokenError(OAuth2Error):
         extras.append(f'error="{self.error}"')
         error_description = self.get_error_description()
         extras.append(f'error_description="{error_description}"')
-        headers.append(("WWW-Authenticate", "Bearer " + ", ".join(extras)))
+        headers.append(("WWW-Authenticate", self.AUTH_SCHEME + " " + ", ".join(extras)))
         return headers
 
 
