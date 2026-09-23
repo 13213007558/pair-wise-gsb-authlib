@@ -11,6 +11,9 @@ class DeviceCredentialMixin:
     def get_user_code(self):
         raise NotImplementedError()
 
+    def get_interval(self):
+        raise NotImplementedError()
+
     def is_expired(self):
         raise NotImplementedError()
 
@@ -24,6 +27,9 @@ class DeviceCredentialDict(dict, DeviceCredentialMixin):
 
     def get_user_code(self):
         return self["user_code"]
+
+    def get_interval(self):
+        return self.get("interval")
 
     def get_nonce(self):
         return self.get("nonce")

@@ -72,14 +72,24 @@ But first, we need to implement the missing methods::
             user = User.query.get(user_id)
             return user, bool(allowed)
 
-        def should_slow_down(self, credential, now):
-            # developers can return True/False based on credential and now
-            return False
+        def touch_device_credential(self, device_code, poll_time):
+            # atomically record the poll time and return the previous one
+            last = redis.getset('oauth_device_poll:' + device_code, poll_time)
+            return float(last) if last is not None else None
+
+        def consume_device_credential(self, device_code):
+            # atomically mark the device_code as consumed, return False
+            # if it was already consumed by another request
+            return redis.setnx('oauth_device_used:' + device_code, 1)
 
     authorization_server.register_grant(MyDeviceCodeGrant)
 
 Note ``query_user_grant``, we are fetching data from redis. This data
 was saved from verification endpoint when end user granted the request.
+
+``touch_device_credential`` and ``consume_device_credential`` MUST be
+atomic, so that a ``device_code`` can only be exchanged for an access
+token once, even when the client is polling with concurrent requests.
 
 Verification Endpoint
 ---------------------

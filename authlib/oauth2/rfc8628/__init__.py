@@ -13,6 +13,7 @@ from .endpoint import DeviceAuthorizationEndpoint
 from .errors import AuthorizationPendingError
 from .errors import ExpiredTokenError
 from .errors import SlowDownError
+from .errors import UsedDeviceCodeError
 from .models import DeviceCredentialDict
 from .models import DeviceCredentialMixin
 
@@ -25,4 +26,5 @@ __all__ = [
     "AuthorizationPendingError",
     "SlowDownError",
     "ExpiredTokenError",
+    "UsedDeviceCodeError",
 ]

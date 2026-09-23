@@ -28,3 +28,12 @@ class ExpiredTokenError(OAuth2Error):
     """
 
     error = "expired_token"
+
+
+class UsedDeviceCodeError(OAuth2Error):
+    """The "device_code" has already been exchanged for an access
+    token.  A "device_code" can only be redeemed once; the client
+    MUST NOT attempt to exchange the same "device_code" again.
+    """
+
+    error = "used_device_code"

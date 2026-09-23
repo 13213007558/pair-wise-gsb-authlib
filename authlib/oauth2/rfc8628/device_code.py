@@ -1,4 +1,5 @@
 import logging
+import time
 
 from ..rfc6749 import BaseGrant
 from ..rfc6749 import TokenEndpointMixin
@@ -9,6 +10,7 @@ from ..rfc6749.hooks import hooked
 from .errors import AuthorizationPendingError
 from .errors import ExpiredTokenError
 from .errors import SlowDownError
+from .errors import UsedDeviceCodeError
 
 log = logging.getLogger(__name__)
 DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
@@ -107,6 +109,9 @@ class DeviceCodeGrant(BaseGrant, TokenEndpointMixin):
         if credential.get_client_id() != client.get_client_id():
             raise UnauthorizedClientError()
 
+        if credential.is_expired():
+            raise ExpiredTokenError()
+
         user = self.validate_device_credential(credential)
         self.request.user = user
         self.request.client = client
@@ -130,9 +135,6 @@ class DeviceCodeGrant(BaseGrant, TokenEndpointMixin):
         return 200, token, self.TOKEN_RESPONSE_HEADER
 
     def validate_device_credential(self, credential):
-        if credential.is_expired():
-            raise ExpiredTokenError()
-
         user_code = credential.get_user_code()
         user_grant = self.query_user_grant(user_code)
 
@@ -140,9 +142,16 @@ class DeviceCodeGrant(BaseGrant, TokenEndpointMixin):
             user, approved = user_grant
             if not approved:
                 raise AccessDeniedError()
+            device_code = self.request.payload.data.get("device_code")
+            if not self.consume_device_credential(device_code):
+                raise UsedDeviceCodeError()
             return user
 
-        if self.should_slow_down(credential):
+        device_code = self.request.payload.data.get("device_code")
+        now = time.time()
+        last_poll_time = self.touch_device_credential(device_code, now)
+        interval = credential.get_interval()
+        if interval and last_poll_time is not None and now - last_poll_time < interval:
             raise SlowDownError()
 
         raise AuthorizationPendingError()
@@ -177,9 +186,41 @@ class DeviceCodeGrant(BaseGrant, TokenEndpointMixin):
         """
         raise NotImplementedError()
 
-    def should_slow_down(self, credential):
-        """The authorization request is still pending and polling should
-        continue, but the interval MUST be increased by 5 seconds for this
-        and all subsequent requests.
+    def touch_device_credential(self, device_code, poll_time):
+        """Record a polling attempt of the given device_code at
+        poll_time, and return the previous poll time (or None if this
+        is the first poll). Developers MUST implement it in subclass,
+        and the implementation MUST be atomic, so that concurrent
+        polling requests observe a consistent last poll time::
+
+            def touch_device_credential(self, device_code, poll_time):
+                last = redis.getset("oauth_device_poll:" + device_code, poll_time)
+                return float(last) if last is not None else None
+
+        :param device_code: a string represent the code.
+        :param poll_time: a UNIX timestamp of the current poll.
+        :return: the previous poll timestamp or None
+        """
+        raise NotImplementedError()
+
+    def consume_device_credential(self, device_code):
+        """Mark the given device_code as consumed, so that it can not
+        be exchanged for an access token again. Developers MUST
+        implement it in subclass, and the implementation MUST be
+        atomic: only one of many concurrent requests may consume the
+        same device_code::
+
+            def consume_device_credential(self, device_code):
+                # e.g. an atomic compare-and-set in SQL
+                rows = DeviceCredential.query.filter_by(
+                    device_code=device_code,
+                    consumed=False,
+                ).update({"consumed": True})
+                db.session.commit()
+                return rows == 1
+
+        :param device_code: a string represent the code.
+        :return: True if this call consumed the code, False if it was
+            already consumed
         """
         raise NotImplementedError()
