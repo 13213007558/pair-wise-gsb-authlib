@@ -2,6 +2,9 @@ from flask import g
 from flask import redirect
 from flask import request
 from flask import session
+from joserfc.errors import JoseError
+
+from authlib.oauth2.jarm import validate_jwt_response
 
 from ..base_client import BaseApp
 from ..base_client import OAuth1Mixin
@@ -132,15 +135,21 @@ class FlaskOAuth2App(FlaskAppMixin, OAuth2Mixin, OpenIDMixin, BaseApp):
                 description = request.args.get("error_description")
                 raise OAuthError(error=error, description=description)
 
-            params = {
-                "code": request.args.get("code"),
-                "state": request.args.get("state"),
-            }
+            if "response" in request.args:
+                params = self._parse_jarm_response(request.args)
+            else:
+                params = {
+                    "code": request.args.get("code"),
+                    "state": request.args.get("state"),
+                }
         else:
-            params = {
-                "code": request.form.get("code"),
-                "state": request.form.get("state"),
-            }
+            if "response" in request.form:
+                params = self._parse_jarm_response(request.form)
+            else:
+                params = {
+                    "code": request.form.get("code"),
+                    "state": request.form.get("state"),
+                }
 
         state_data = self.framework.get_state_data(session, params.get("state"))
         self.framework.clear_state_data(session, params.get("state"))
@@ -162,3 +171,48 @@ class FlaskOAuth2App(FlaskAppMixin, OAuth2Mixin, OpenIDMixin, BaseApp):
             )
             token["userinfo"] = userinfo
         return token
+
+    def _parse_jarm_response(self, values):
+        """Validate a JARM (JWT Secured Authorization Response Mode)
+        ``response`` parameter and extract ``code`` and ``state`` from
+        the JWT claims. The signature, algorithm, issuer, audience and
+        validity period are verified before any state data is looked up
+        or consumed.
+        """
+        # A plaintext "code" outside the signed JWT must not be honored.
+        if values.get("code"):
+            raise OAuthError(
+                error="invalid_response",
+                description="Unexpected 'code' parameter outside the JARM response.",
+            )
+
+        metadata = self.server_metadata
+        key = metadata.get("jarm_key")
+        issuer = metadata.get("jarm_issuer")
+        if not key or not issuer:
+            raise OAuthError(
+                error="invalid_response",
+                description=(
+                    "Missing JARM configuration ('jarm_key' and 'jarm_issuer')."
+                ),
+            )
+
+        try:
+            claims = validate_jwt_response(
+                values["response"],
+                key,
+                issuer=issuer,
+                audience=self.client_id,
+                algorithms=metadata.get("jarm_algorithms"),
+            )
+        except JoseError as error:
+            raise OAuthError(
+                error="invalid_response",
+                description=error.description or str(error),
+            ) from error
+
+        error = claims.get("error")
+        if error:
+            raise OAuthError(error=error, description=claims.get("error_description"))
+
+        return {"code": claims.get("code"), "state": claims.get("state")}
