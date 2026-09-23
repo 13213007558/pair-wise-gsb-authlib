@@ -1,8 +1,10 @@
+import copy
 import logging
 
 from authlib.common.security import generate_token
 from authlib.common.urls import add_params_to_uri
 
+from ...rfc9396 import InvalidAuthorizationDetailsError
 from ..errors import AccessDeniedError
 from ..errors import InvalidClientError
 from ..errors import InvalidGrantError
@@ -156,6 +158,8 @@ class AuthorizationCodeGrant(BaseGrant, AuthorizationEndpointMixin, TokenEndpoin
 
         self.request.user = grant_user
 
+        self._resolve_consented_authorization_details(redirect_uri)
+
         code = self.generate_authorization_code()
         self.save_authorization_code(code, self.request)
 
@@ -286,9 +290,43 @@ class AuthorizationCodeGrant(BaseGrant, AuthorizationEndpointMixin, TokenEndpoin
         )
         log.debug("Issue token %r to %r", token, client)
 
+        details = authorization_code.get_authorization_details()
+        if details:
+            token["authorization_details"] = copy.deepcopy(details)
+
         self.save_token(token)
         self.delete_authorization_code(authorization_code)
         return 200, token, self.TOKEN_RESPONSE_HEADER
+
+    def _resolve_consented_authorization_details(self, redirect_uri):
+        """Resolve the RFC 9396 authorization details to save with the
+        authorization code. The consent endpoint may narrow the requested
+        details by assigning the consented version to
+        ``grant.authorization_details`` before creating the authorization
+        response; if it does not, the requested details are used as-is.
+        The saved value is detached from the objects handed to the consent
+        callback, so later mutation of those objects cannot alter the
+        saved authorization.
+        """
+        requested = self.request.authorization_details
+        if requested is None:
+            return
+
+        consented = self.authorization_details
+        if consented is None:
+            consented = requested
+
+        if not consented:
+            # the resource owner granted none of the requested details
+            raise AccessDeniedError(redirect_uri=redirect_uri)
+
+        if not self.server.authorization_details_within_granted(consented, requested):
+            raise InvalidAuthorizationDetailsError(
+                "Consented 'authorization_details' exceed the requested ones.",
+                redirect_uri=redirect_uri,
+            )
+
+        self.request.authorization_details = copy.deepcopy(consented)
 
     def generate_authorization_code(self):
         """ "The method to generate "code" value for authorization code data.
@@ -391,6 +429,9 @@ def validate_code_authorization_request(grant):
         if scope is None:
             raise InvalidScopeError()
         request.scope = scope
+        request.authorization_details = grant.server.parse_authorization_details(
+            request.payload.data.get("authorization_details")
+        )
 
     try:
         validate_authorization_request_payload(grant, redirect_uri)

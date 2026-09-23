@@ -25,6 +25,9 @@ class BaseGrant(Hookable):
         self.redirect_uri = None
         self.request = request
         self.server = server
+        #: consented RFC 9396 authorization details, set by the
+        #: authorization endpoint before creating the response
+        self.authorization_details = None
 
     @property
     def client(self):

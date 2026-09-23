@@ -1,6 +1,8 @@
 from authlib.common.errors import ContinueIteration
 from authlib.deprecate import deprecate
 
+from ..rfc9396 import is_within_granted_details
+from ..rfc9396 import parse_authorization_details
 from .authenticate_client import ClientAuthentication
 from .endpoint import Endpoint
 from .endpoint import EndpointRequest
@@ -31,6 +33,7 @@ class AuthorizationServer(Hookable):
         self._token_grants = []
         self._endpoints = {}
         self._extensions = []
+        self._authorization_details_handlers = {}
 
     def query_client(self, client_id):
         """Query OAuth client by client_id. The client model class MUST
@@ -155,6 +158,47 @@ class AuthorizationServer(Hookable):
 
     def register_extension(self, extension):
         self._extensions.append(extension(self))
+
+    def register_authorization_details_handler(self, handler):
+        """Register a handler for one RFC 9396 authorization details
+        ``type``. The handler is responsible for validating objects of its
+        type and for deciding whether a candidate object stays within a
+        previously granted one::
+
+            class DatasetAccessHandler(AuthorizationDetailsHandler):
+                type = ``dataset_access``
+
+                ...
+
+            authorization_server.register_authorization_details_handler(
+                DatasetAccessHandler()
+            )
+
+        :param handler: an
+            :class:`authlib.oauth2.rfc9396.AuthorizationDetailsHandler`
+            instance.
+        """
+        self._authorization_details_handlers[handler.type] = handler
+
+    def parse_authorization_details(self, value):
+        """Parse and validate the ``authorization_details`` request
+        parameter with the registered type handlers. Returns None if the
+        parameter is absent.
+
+        :param value: the raw parameter value (a JSON string), or None.
+        :raises authlib.oauth2.rfc9396.InvalidAuthorizationDetailsError:
+            if the value is malformed or contains an unknown type.
+        """
+        return parse_authorization_details(value, self._authorization_details_handlers)
+
+    def authorization_details_within_granted(self, requested, granted):
+        """Check that every object in ``requested`` is covered by an object
+        of the same type in ``granted``, using the narrowing rule of each
+        registered type handler.
+        """
+        return is_within_granted_details(
+            requested, granted, self._authorization_details_handlers
+        )
 
     def get_error_uri(self, request, error):
         """Return a URI for the given error, framework may implement this method."""

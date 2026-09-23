@@ -1,0 +1,100 @@
+.. _specs/rfc9396:
+
+RFC9396: OAuth 2.0 Rich Authorization Requests
+==============================================
+
+This section contains the generic implementation of :rfc:`RFC9396 <9396>`.
+
+RFC 9396 adds the `authorization_details` parameter, a JSON array of
+typed objects, to the authorization and token requests. It lets a client
+ask for fine-grained authorization, and lets the resource owner consent
+to only part of it. The issued access token and refresh token then carry
+exactly the consented details.
+
+The framework parses and checks the JSON envelope (an array of objects,
+each with a string `type` field) and rejects unknown types with an
+`invalid_authorization_details` error. Everything specific to a type --
+which fields are valid, and what "narrower than granted" means -- is
+delegated to a registered type handler. There is deliberately no generic
+dict-subset comparison: each type defines its own narrowing rules.
+
+Registering a type handler
+--------------------------
+
+Subclass :class:`AuthorizationDetailsHandler` and register it on the
+authorization server::
+
+    from authlib.oauth2.rfc9396 import AuthorizationDetailsHandler
+    from authlib.oauth2.rfc9396 import InvalidAuthorizationDetailsError
+
+
+    class DatasetAccessHandler(AuthorizationDetailsHandler):
+        type = "dataset_access"
+        ALLOWED_ACTIONS = ("read", "export")
+
+        def validate(self, detail):
+            locations = detail.get("locations")
+            if not isinstance(locations, list) or not locations:
+                raise InvalidAuthorizationDetailsError(
+                    "'locations' MUST be a non-empty list."
+                )
+            actions = detail.get("actions")
+            if any(action not in self.ALLOWED_ACTIONS for action in actions):
+                raise InvalidAuthorizationDetailsError(
+                    "'actions' may only contain 'read' and 'export'."
+                )
+
+        def is_within_granted(self, requested, granted):
+            # both sets can only narrow
+            return set(requested["locations"]) <= set(granted["locations"]) \
+                and set(requested["actions"]) <= set(granted["actions"])
+
+
+    authorization_server.register_authorization_details_handler(
+        DatasetAccessHandler()
+    )
+
+Consent and token issuance
+--------------------------
+
+The parsed objects are available on the grant while showing the consent
+page::
+
+    grant = server.get_consent_grant(end_user=user)
+    details = grant.request.authorization_details  # parsed objects or None
+
+Before creating the authorization response, the endpoint MAY narrow the
+requested details to what the user actually consented to::
+
+    grant.authorization_details = consented_details
+    return server.create_authorization_response(grant=grant, grant_user=user)
+
+The framework verifies that the consented version stays within the
+requested one, treats an empty consent as a denial, and saves a detached
+copy with the authorization code -- later mutation of the objects handed
+to the callback cannot alter the saved authorization. The consented
+details are carried into the token response and stored with the token.
+
+Refreshing
+----------
+
+A refresh token request MAY include `authorization_details` again to
+narrow the granted details. Requesting anything beyond the granted
+details is rejected with `invalid_scope`, while malformed values are
+rejected with `invalid_authorization_details`, so syntax errors and
+privilege escalation stay distinguishable.
+
+API Reference
+-------------
+
+.. module:: authlib.oauth2.rfc9396
+
+.. autoclass:: AuthorizationDetailsHandler
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InvalidAuthorizationDetailsError
+
+.. autofunction:: parse_authorization_details
+
+.. autofunction:: is_within_granted_details

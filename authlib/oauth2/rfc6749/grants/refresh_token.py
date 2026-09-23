@@ -7,6 +7,7 @@ Access Token per `Section 6`_.
 .. _`Section 6`: https://tools.ietf.org/html/rfc6749#section-6
 """
 
+import copy
 import logging
 
 from ..errors import InvalidGrantError
@@ -70,6 +71,19 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
         if not original_scope.issuperset(set(scope_to_list(scope))):
             raise InvalidScopeError()
 
+    def _validate_token_authorization_details(self, token):
+        value = self.request.payload.data.get("authorization_details")
+        requested = self.server.parse_authorization_details(value)
+        if requested is None:
+            return
+
+        granted = token.get_authorization_details()
+        if not self.server.authorization_details_within_granted(requested, granted):
+            raise InvalidScopeError(
+                "The requested 'authorization_details' exceed the granted ones."
+            )
+        self.request.authorization_details = requested
+
     def validate_token_request(self):
         """If the authorization server issued a refresh token to the client, the
         client makes a refresh request to the token endpoint by adding the
@@ -108,6 +122,7 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
         self.request.client = client
         refresh_token = self._validate_request_token(client)
         self._validate_token_scope(refresh_token)
+        self._validate_token_authorization_details(refresh_token)
         self.request.refresh_token = refresh_token
 
     @hooked
@@ -141,6 +156,11 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
             scope=scope,
             include_refresh_token=self.INCLUDE_NEW_REFRESH_TOKEN,
         )
+        details = self.request.authorization_details
+        if details is None:
+            details = refresh_token.get_authorization_details()
+        if details:
+            token["authorization_details"] = copy.deepcopy(details)
         return token
 
     def authenticate_refresh_token(self, refresh_token):

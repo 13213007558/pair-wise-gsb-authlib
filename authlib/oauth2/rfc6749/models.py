@@ -165,6 +165,18 @@ class AuthorizationCodeMixin:
         """
         raise NotImplementedError()
 
+    def get_authorization_details(self):
+        """A method to get the RFC 9396 authorization details granted
+        with this authorization code. For instance, the column is called
+        ``authorization_details``::
+
+            def get_authorization_details(self):
+                return self.authorization_details
+
+        :return: a list of authorization details objects, or None
+        """
+        return None
+
 
 class TokenMixin:
     def check_client(self, client):
@@ -188,6 +200,18 @@ class TokenMixin:
         :return: scope string
         """
         raise NotImplementedError()
+
+    def get_authorization_details(self):
+        """A method to get the RFC 9396 authorization details granted
+        with this token. For instance, the column is called
+        ``authorization_details``::
+
+            def get_authorization_details(self):
+                return self.authorization_details
+
+        :return: a list of authorization details objects, or None
+        """
+        return None
 
     def get_expires_in(self):
         """A method to get the ``expires_in`` value of the token. e.g.
