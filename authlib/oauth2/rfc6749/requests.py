@@ -91,6 +91,8 @@ class OAuth2Request(OAuth2Payload):
         self.refresh_token = None
         self.credential = None
         self._scope = None
+        #: validated RFC 8707 resource indicators, set by grants
+        self.resources = None
 
     @property
     def args(self):

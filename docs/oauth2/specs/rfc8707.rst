@@ -1,0 +1,103 @@
+.. _specs/rfc8707:
+
+RFC8707: Resource Indicators for OAuth 2.0
+==========================================
+
+This section contains the generic implementation of RFC8707_.
+Resource Indicators for OAuth 2.0 defines a ``resource`` request parameter
+that lets a client signal to the authorization server which protected
+resource (or resources) it intends to access. The authorization server can
+then issue audience-restricted access tokens: a token issued for one
+resource server is rejected by another, even when both share the same
+scopes.
+
+When combined with :ref:`specs/rfc9068`, the selected resources are carried
+by the ``aud`` claim of the JWT access token, and each resource server only
+accepts tokens that target it.
+
+Authorization server
+--------------------
+
+Register the RFC 8707 grants instead of the plain RFC 6749 ones::
+
+    from authlib.oauth2 import rfc8707
+
+
+    class AuthorizationCodeGrant(rfc8707.AuthorizationCodeGrant):
+        def save_authorization_code(self, code, request):
+            # request.resources contains the validated resource indicators,
+            # persist them with the authorization code
+            ...
+
+
+    class RefreshTokenGrant(rfc8707.RefreshTokenGrant):
+        ...
+
+
+    authorization_server.register_grant(AuthorizationCodeGrant)
+    authorization_server.register_grant(RefreshTokenGrant)
+
+The ``resource`` parameter MAY appear multiple times in authorization and
+token requests. Every value MUST be an absolute URI and MUST NOT contain a
+fragment component, otherwise the server answers with an ``invalid_target``
+error.
+
+The application decides which resources a client may request and which
+resources can be authorized together, by re-implementing
+:meth:`~authlib.oauth2.rfc8707.grants.ResourceIndicatorMixin.get_allowed_resources`::
+
+    class AuthorizationCodeGrant(rfc8707.AuthorizationCodeGrant):
+        def get_allowed_resources(self, client, resources):
+            allowed = {"https://api1.example.com", "https://api2.example.com"}
+            if not set(resources).issubset(allowed):
+                raise InvalidTargetError()
+            return resources
+
+The resources consented by the resource owner are stored with the
+authorization code. At the token endpoint, the client MAY request a subset
+of the consented resources. When the token request omits the ``resource``
+parameter, the server default selection policy applies; by default all the
+consented resources are selected, and developers can re-implement
+:meth:`~authlib.oauth2.rfc8707.grants.AuthorizationCodeGrant.get_default_resources`
+to explicitly configure another policy.
+
+The resolved resources are passed to the token generator as the
+``resources`` argument, they are never folded into the ``scope`` value.
+Token generators willing to support resource indicators MUST accept a
+``resources`` keyword argument. :ref:`specs/rfc9068`
+:class:`~authlib.oauth2.rfc9068.JWTBearerTokenGenerator` natively supports
+it and fills the JWT ``aud`` claim with the selected resources.
+
+A refresh token request MAY select a subset of the resources the original
+token was issued for, but it can never widen that set. When the ``resource``
+parameter is omitted, the refreshed token keeps the original resources.
+
+Applications that do not register the RFC 8707 grants are unaffected:
+requests without a ``resource`` parameter behave exactly as before.
+
+API Reference
+-------------
+
+.. module:: authlib.oauth2.rfc8707
+
+.. autoclass:: AuthorizationCodeGrant
+    :member-order: bysource
+    :members:
+
+.. autoclass:: RefreshTokenGrant
+    :member-order: bysource
+    :members:
+
+.. autoclass:: AuthorizationCodeMixin
+    :members:
+
+.. autoclass:: TokenMixin
+    :members:
+
+.. autoclass:: InvalidTargetError
+
+.. autofunction:: extract_resource_parameter
+
+.. autofunction:: validate_resource_parameter
+
+.. _RFC8707: https://www.rfc-editor.org/rfc/rfc8707.html

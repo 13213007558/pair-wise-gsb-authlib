@@ -79,6 +79,7 @@ class BearerTokenGenerator:
         scope=None,
         expires_in=None,
         include_refresh_token=True,
+        resources=None,
     ):
         """Generate a bearer token for OAuth 2.0 authorization token endpoint.
 
@@ -88,11 +89,21 @@ class BearerTokenGenerator:
         :param expires_in: if provided, use this value as expires_in.
         :param scope: current requested scope.
         :param include_refresh_token: should refresh_token be included.
+        :param resources: optional list of RFC 8707 resource indicators.
+            When provided, the access token and refresh token generators
+            MUST accept a ``resources`` keyword argument.
         :return: Token dict
         """
         scope = self.get_allowed_scope(client, scope)
+        generator_kwargs = {}
+        if resources is not None:
+            generator_kwargs["resources"] = resources
         access_token = self.access_token_generator(
-            client=client, grant_type=grant_type, user=user, scope=scope
+            client=client,
+            grant_type=grant_type,
+            user=user,
+            scope=scope,
+            **generator_kwargs,
         )
         if expires_in is None:
             expires_in = self._get_expires_in(client, grant_type)
@@ -105,10 +116,16 @@ class BearerTokenGenerator:
             token["expires_in"] = expires_in
         if include_refresh_token and self.refresh_token_generator:
             token["refresh_token"] = self.refresh_token_generator(
-                client=client, grant_type=grant_type, user=user, scope=scope
+                client=client,
+                grant_type=grant_type,
+                user=user,
+                scope=scope,
+                **generator_kwargs,
             )
         if scope:
             token["scope"] = scope
+        if resources:
+            token["resource"] = " ".join(resources)
         return token
 
     def __call__(
@@ -119,7 +136,14 @@ class BearerTokenGenerator:
         scope=None,
         expires_in=None,
         include_refresh_token=True,
+        resources=None,
     ):
         return self.generate(
-            grant_type, client, user, scope, expires_in, include_refresh_token
+            grant_type,
+            client,
+            user,
+            scope,
+            expires_in,
+            include_refresh_token,
+            resources,
         )

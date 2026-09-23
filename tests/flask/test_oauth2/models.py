@@ -104,6 +104,7 @@ def save_authorization_code(code, request):
         client_id=client.client_id,
         redirect_uri=request.payload.redirect_uri,
         scope=request.scope,
+        resource=" ".join(request.resources or []),
         nonce=request.payload.data.get("nonce"),
         user_id=request.user.id,
         code_challenge=request.payload.data.get("code_challenge"),
