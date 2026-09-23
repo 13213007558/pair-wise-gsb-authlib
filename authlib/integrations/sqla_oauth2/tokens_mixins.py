@@ -74,3 +74,17 @@ class OAuth2TokenMixin(TokenMixin):
 
         expires_at = self.issued_at + self.expires_in
         return expires_at < time.time()
+
+
+class OAuth2TokenFamilyMixin(TokenMixin):
+    """Adds the "parent_id" link used by token-family features to a
+    token model. Combine it with :class:`OAuth2TokenMixin`::
+
+        class Token(db.Model, OAuth2TokenMixin, OAuth2TokenFamilyMixin):
+            id = db.Column(db.Integer, primary_key=True)
+    """
+
+    parent_id = Column(Integer, nullable=True)
+
+    def get_parent_id(self):
+        return self.parent_id
