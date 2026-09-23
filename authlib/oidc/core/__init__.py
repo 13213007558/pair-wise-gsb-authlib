@@ -10,6 +10,7 @@ from .claims import CodeIDToken
 from .claims import HybridIDToken
 from .claims import IDToken
 from .claims import ImplicitIDToken
+from .claims import LogoutToken
 from .claims import UserInfo
 from .claims import get_claim_cls_by_response_type
 from .grants import OpenIDCode
@@ -25,6 +26,7 @@ __all__ = [
     "CodeIDToken",
     "ImplicitIDToken",
     "HybridIDToken",
+    "LogoutToken",
     "UserInfo",
     "UserInfoEndpoint",
     "get_claim_cls_by_response_type",

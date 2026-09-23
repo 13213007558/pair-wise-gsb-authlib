@@ -7,6 +7,7 @@ from authlib.common.security import generate_token
 from authlib.common.urls import add_params_to_uri
 from authlib.oidc.core import CodeIDToken
 from authlib.oidc.core import ImplicitIDToken
+from authlib.oidc.core import LogoutToken
 from authlib.oidc.core import UserInfo
 
 
@@ -84,6 +85,53 @@ class OpenIDMixin:
 
         claims.validate(leeway=leeway)
         return UserInfo(claims)
+
+    def parse_logout_token(self, logout_token, claims_options=None, leeway=120):
+        """Parse and validate an OpenID Connect Back-Channel Logout token.
+
+        The token is verified with the issuer's ``jwks`` and the signing
+        algorithms declared in the server metadata. The returned claims are
+        validated per the Back-Channel Logout 1.0 specification: ``iss``,
+        ``aud``, ``iat``, ``jti`` and ``events`` are required, a
+        ``nonce`` claim is rejected, and at least one of
+        ``sub``/``sid`` must be present.
+
+        :param logout_token: the ``logout_token`` JWT sent by the provider.
+        :param claims_options: extra claims options for validation.
+        :param leeway: leeway in seconds for time based claims.
+        :return: A :class:`LogoutToken` claims instance.
+        """
+        metadata = self.load_server_metadata()
+        if claims_options is None:
+            claims_options = {"aud": {"value": self.client_id}}
+            if "issuer" in metadata:
+                claims_options["iss"] = {"values": [metadata["issuer"]]}
+
+        alg_values = metadata.get("id_token_signing_alg_values_supported")
+
+        key_set = KeySet.import_key_set(self.fetch_jwk_set())
+        try:
+            token = jwt.decode(
+                logout_token,
+                key=key_set,
+                registry=JWSRegistry(algorithms=alg_values, strict_check_header=False),
+            )
+        except InvalidKeyIdError:
+            key_set = KeySet.import_key_set(self.fetch_jwk_set(force=True))
+            token = jwt.decode(
+                logout_token,
+                key=key_set,
+                registry=JWSRegistry(algorithms=alg_values, strict_check_header=False),
+            )
+
+        claims = LogoutToken(
+            token.claims,
+            token.header,
+            claims_options,
+            {"client_id": self.client_id},
+        )
+        claims.validate(leeway=leeway)
+        return claims
 
     def create_logout_url(
         self,

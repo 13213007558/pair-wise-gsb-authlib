@@ -6,6 +6,8 @@ from .apps import FlaskOAuth1App
 from .apps import FlaskOAuth2App
 from .integration import FlaskIntegration
 from .integration import token_update
+from .logout import InMemoryLogoutStore
+from .logout import LogoutTokenStore
 
 
 class OAuth(BaseOAuth):
@@ -54,6 +56,8 @@ __all__ = [
     "FlaskIntegration",
     "FlaskOAuth1App",
     "FlaskOAuth2App",
+    "LogoutTokenStore",
+    "InMemoryLogoutStore",
     "token_update",
     "OAuthError",
 ]

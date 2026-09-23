@@ -64,6 +64,10 @@ OpenID Claims
     :show-inheritance:
     :members:
 
+.. autoclass:: LogoutToken
+    :show-inheritance:
+    :members:
+
 .. autoclass:: UserInfo
     :members:
 
@@ -93,4 +97,3 @@ The `OpenID Connect Dynamic Client Registration <https://openid.net/specs/openid
 .. automodule:: authlib.oidc.registration
     :show-inheritance:
     :members:
-

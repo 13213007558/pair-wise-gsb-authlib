@@ -224,6 +224,54 @@ The ``logout_redirect`` method accepts:
     The ``id_token`` is available in ``token['id_token']`` after calling
     ``authorize_access_token()``.
 
+Back-Channel Logout
+-------------------
+
+To implement `OpenID Connect Back-Channel Logout`_, register a route that
+receives the provider's POST request and delegates to
+``handle_backchannel_logout``. This endpoint is independent of the
+browser session cookie and of the OAuth ``state``/CSRF data; if you use
+a CSRF extension, exempt this route::
+
+    @app.route('/backchannel-logout', methods=['POST'])
+    def backchannel_logout():
+        return oauth.google.handle_backchannel_logout()
+
+.. _OpenID Connect Back-Channel Logout: https://openid.net/specs/openid-connect-backchannel-1_0.html
+
+The received ``logout_token`` is verified with the issuer's keys and the
+signing algorithms declared in the server metadata. The claims are validated
+per the specification: ``iss``, ``aud``, ``iat``, ``jti`` and
+the back-channel logout ``events`` value are required, a ``nonce``
+claim is rejected, and at least one of ``sub``/``sid`` must be
+present. Invalid notifications are answered with a 400 error response and
+neither consume the ``jti`` nor invalidate any session; repeated
+notifications succeed idempotently.
+
+Register your local sessions in the client's ``logout_store`` when users
+log in, and pass an ``on_logout`` callback to invalidate them::
+
+    def on_logout(session_ids, claims):
+        for session_id in session_ids:
+            delete_session(session_id)
+
+    @app.route('/backchannel-logout', methods=['POST'])
+    def backchannel_logout():
+        return oauth.google.handle_backchannel_logout(on_logout=on_logout)
+
+Sessions are matched by issuer: a ``sid`` from another issuer is never
+affected, a token carrying only ``sub`` ends every session of that user
+under the token's issuer, and a token carrying both ``sid`` and
+``sub`` only ends sessions that belong to both.
+
+The default ``InMemoryLogoutStore`` records the processed ``jti``
+values and invalidates the matched sessions atomically. For multi-process
+deployments, assign a custom
+:class:`authlib.integrations.flask_client.LogoutTokenStore` backed by
+persistent storage to ``client.logout_store``; its ``apply_logout``
+method is the atomic boundary between the replay record and the session
+invalidation.
+
 Examples
 ---------
 

@@ -1,7 +1,11 @@
+import json
+
+from flask import Response
 from flask import g
 from flask import redirect
 from flask import request
 from flask import session
+from joserfc.errors import JoseError
 
 from ..base_client import BaseApp
 from ..base_client import OAuth1Mixin
@@ -10,6 +14,7 @@ from ..base_client import OAuthError
 from ..base_client import OpenIDMixin
 from ..requests_client import OAuth1Session
 from ..requests_client import OAuth2Session
+from .logout import InMemoryLogoutStore
 
 
 class FlaskAppMixin:
@@ -78,6 +83,60 @@ class FlaskOAuth1App(FlaskAppMixin, OAuth1Mixin, BaseApp):
 
 class FlaskOAuth2App(FlaskAppMixin, OAuth2Mixin, OpenIDMixin, BaseApp):
     client_cls = OAuth2Session
+
+    @property
+    def logout_store(self):
+        """The :class:`LogoutTokenStore` used by back-channel logout.
+
+        Defaults to a per-client in-memory store; assign a custom
+        persistence adapter to share replay records and the session index
+        between processes.
+        """
+        store = getattr(self, "_logout_store", None)
+        if store is None:
+            store = self._logout_store = InMemoryLogoutStore()
+        return store
+
+    @logout_store.setter
+    def logout_store(self, store):
+        self._logout_store = store
+
+    def handle_backchannel_logout(
+        self, logout_token=None, on_logout=None, store=None, leeway=120
+    ):
+        """Handle an OpenID Connect Back-Channel Logout request.
+
+        This endpoint is fully independent of the browser session cookie
+        and of the OAuth ``state``/CSRF data; it only reads the
+        ``logout_token`` form parameter of the provider's POST request.
+
+        :param logout_token: the logout token JWT, defaults to the current
+            request's ``logout_token`` form parameter.
+        :param on_logout: optional callback invoked as
+            ``on_logout(session_ids, claims)`` so the application can
+            invalidate the matched local sessions.
+        :param store: a :class:`LogoutTokenStore` persistence adapter,
+            defaults to :attr:`logout_store`.
+        :param leeway: leeway in seconds for time based claims.
+        :return: A HTTP 200 response on success (including idempotent
+            replays), or a 400 JSON error response.
+        """
+        if logout_token is None:
+            logout_token = request.form.get("logout_token")
+        if not logout_token:
+            return _backchannel_logout_error(
+                "invalid_request", 'Missing "logout_token" parameter'
+            )
+
+        try:
+            claims = self.parse_logout_token(logout_token, leeway=leeway)
+        except JoseError as error:
+            return _backchannel_logout_error("invalid_request", str(error))
+
+        if store is None:
+            store = self.logout_store
+        store.apply_logout(claims, on_logout)
+        return _backchannel_logout_response(200)
 
     def logout_redirect(
         self, post_logout_redirect_uri=None, id_token_hint=None, **kwargs
@@ -162,3 +221,22 @@ class FlaskOAuth2App(FlaskAppMixin, OAuth2Mixin, OpenIDMixin, BaseApp):
             )
             token["userinfo"] = userinfo
         return token
+
+
+def _backchannel_logout_response(status, payload=None):
+    if payload is None:
+        response = Response(status=status)
+    else:
+        response = Response(
+            json.dumps(payload), status=status, content_type="application/json"
+        )
+    response.headers["Cache-Control"] = "no-cache, no-store"
+    response.headers["Pragma"] = "no-cache"
+    return response
+
+
+def _backchannel_logout_error(error, description=None):
+    payload = {"error": error}
+    if description:
+        payload["error_description"] = description
+    return _backchannel_logout_response(400, payload)

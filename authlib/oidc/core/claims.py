@@ -17,6 +17,7 @@ __all__ = [
     "CodeIDToken",
     "ImplicitIDToken",
     "HybridIDToken",
+    "LogoutToken",
     "UserInfo",
     "get_claim_cls_by_response_type",
 ]
@@ -190,6 +191,56 @@ class HybridIDToken(ImplicitIDToken):
                 raise MissingClaimError("c_hash")
             if not _verify_hash(c_hash, code, self.header["alg"]):
                 raise InvalidClaimError("c_hash")
+
+
+class LogoutToken(JWTClaims):
+    """The claims of a Logout Token, defined by `OpenID Connect Back-Channel
+    Logout 1.0`_. A Logout Token is a security token that an OpenID Provider
+    sends to a Relying Party to notify it of the logout of an end-user.
+
+    .. _`OpenID Connect Back-Channel Logout 1.0`: https://openid.net/specs/openid-connect-backchannel-1_0.html#LogoutToken
+    """
+
+    #: the event URI that MUST be present in the "events" claim
+    BACKCHANNEL_LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout"
+
+    ESSENTIAL_CLAIMS = ["iss", "aud", "iat", "jti", "events"]
+    REGISTERED_CLAIMS = ["iss", "sub", "aud", "iat", "jti", "events", "sid"]
+
+    def validate(self, now=None, leeway=0):
+        for k in self.ESSENTIAL_CLAIMS:
+            if k not in self:
+                raise MissingClaimError(k)
+
+        super().validate(now, leeway)
+        self.validate_events()
+        self.validate_nonce()
+        self.validate_sub_and_sid()
+
+    def validate_events(self):
+        """REQUIRED. Claim whose value is a JSON object that MUST contain
+        the member name ``http://schemas.openid.net/event/backchannel-logout``
+        to declare that the JWT is a Logout Token.
+        """
+        events = self.get("events")
+        if not isinstance(events, dict):
+            raise InvalidClaimError("events")
+        if self.BACKCHANNEL_LOGOUT_EVENT not in events:
+            raise InvalidClaimError("events")
+
+    def validate_nonce(self):
+        """PROHIBITED. A nonce Claim MUST NOT be present in a Logout Token.
+        Its presence is rejected to prevent downgrade attacks.
+        """
+        if "nonce" in self:
+            raise InvalidClaimError("nonce")
+
+    def validate_sub_and_sid(self):
+        """A Logout Token MUST contain either a ``sub`` or a ``sid``
+        Claim, and MAY contain both.
+        """
+        if not self.get("sub") and not self.get("sid"):
+            raise MissingClaimError("sub")
 
 
 class UserInfo(dict):
