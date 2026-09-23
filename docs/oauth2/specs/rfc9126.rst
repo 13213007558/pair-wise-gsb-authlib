@@ -1,0 +1,87 @@
+.. _specs/rfc9126:
+
+RFC9126: OAuth 2.0 Pushed Authorization Requests
+================================================
+
+.. meta::
+    :description: Python API references on RFC9126 Pushed Authorization
+        Requests with Authlib implementation.
+
+.. module:: authlib.oauth2.rfc9126
+
+This section contains the generic implementation of :rfc:`RFC9126 <9126>`.
+With Pushed Authorization Requests (PAR), a client posts the complete
+authorization request to the authorization server from its back-end, and
+the browser only carries a ``client_id`` and an opaque ``request_uri``
+reference to the authorization endpoint.
+
+Pushed Authorization Request Endpoint
+-------------------------------------
+
+Register the endpoint on the authorization server, and route the HTTP
+traffic to it. With Flask::
+
+    from authlib.oauth2.rfc9126 import PushedAuthorizationRequestEndpoint
+
+    server.register_endpoint(PushedAuthorizationRequestEndpoint())
+
+    @app.route("/oauth/par", methods=["POST"])
+    def pushed_authorization_request():
+        return server.create_endpoint_response("pushed_authorization_request")
+
+The endpoint reuses the client authentication and the authorization
+request validation of the registered grants. It answers with a ``201``
+response containing a short lived ``request_uri`` and its ``expires_in``
+lifetime. The ``request_uri`` is an opaque URN and never contains the
+request in plain text.
+
+Storage
+-------
+
+Persisted pushed authorization requests are accessed through the
+replaceable :class:`PushedAuthorizationRequestStore` interface. An
+in-memory implementation is used by default; production deployments
+should pass their own store to the endpoint::
+
+    server.register_endpoint(
+        PushedAuthorizationRequestEndpoint(store=MySQLStore())
+    )
+
+A pushed authorization request can be displayed on a consent page and
+submitted, but it can only be redeemed once: ``consume`` MUST be atomic
+so that two concurrent submissions have a deterministic outcome. Denied
+and expired requests reach a final state and can never be redeemed.
+
+Authorization Endpoint
+----------------------
+
+Once the endpoint is registered, the authorization endpoint accepts
+requests with only ``client_id`` and ``request_uri``. The pushed content
+is bound to the original client, and parameters sent by the browser
+cannot override it.
+
+Metadata
+--------
+
+The PAR endpoint can be advertised in the authorization server metadata
+(:ref:`specs/rfc8414`) with the ``pushed_authorization_request_endpoint``
+and ``require_pushed_authorization_requests`` values.
+
+API Reference
+-------------
+
+.. autoclass:: PushedAuthorizationRequestEndpoint
+    :member-order: bysource
+    :members:
+
+.. autoclass:: PushedAuthorizationRequest
+    :member-order: bysource
+    :members:
+
+.. autoclass:: PushedAuthorizationRequestStore
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InMemoryPushedAuthorizationRequestStore
+    :member-order: bysource
+    :members:

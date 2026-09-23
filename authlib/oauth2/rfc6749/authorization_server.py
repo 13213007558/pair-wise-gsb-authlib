@@ -267,6 +267,7 @@ class AuthorizationServer(Hookable):
         request = self.create_oauth2_request(request)
 
         try:
+            request = self.resolve_authorization_request(request)
             request.user = end_user
 
             grant = self.get_authorization_grant(request)
@@ -280,6 +281,51 @@ class AuthorizationServer(Hookable):
             error.state = request.payload.state
             raise
         return grant
+
+    def resolve_authorization_request(self, request):
+        """Resolve a pushed authorization request (RFC 9126). If the
+        request contains a "request_uri" parameter and a
+        "pushed_authorization_request" endpoint is registered, the
+        endpoint replaces the request payload with the pushed parameters.
+        Otherwise the request is returned unchanged.
+
+        :param request: OAuth2Request instance.
+        :return: the request to use for the authorization flow.
+        """
+        if "request_uri" not in request.payload.data:
+            return request
+
+        endpoints = self._endpoints.get("pushed_authorization_request")
+        if not endpoints:
+            # not a PAR server, maybe a RFC9101 request object reference
+            return request
+
+        endpoint = endpoints[0]
+        request_uri = request.payload.data.get("request_uri")
+        if not endpoint.claims_request_uri(request_uri):
+            return request
+        return endpoint.resolve_authorization_request(request)
+
+    def finalize_pushed_authorization_request(self, request, grant_user):
+        """Give a pushed authorization request (RFC 9126) its final state
+        when the authorization response is about to be created: it is
+        consumed if the resource owner granted the request, denied
+        otherwise. Requests that were not resolved from a "request_uri"
+        are left untouched.
+
+        :param request: OAuth2Request instance, resolved by
+            "resolve_authorization_request".
+        :param grant_user: the resource owner if granted, None if denied.
+        """
+        pushed_request = getattr(request, "pushed_authorization_request", None)
+        if pushed_request is None:
+            return
+
+        endpoint = self._endpoints["pushed_authorization_request"][0]
+        if grant_user is None:
+            endpoint.deny_pushed_authorization_request(pushed_request)
+        else:
+            endpoint.consume_pushed_authorization_request(pushed_request)
 
     def get_token_grant(self, request):
         """Find the token grant for current request.
@@ -373,17 +419,19 @@ class AuthorizationServer(Hookable):
         if not grant:
             deprecate("The 'grant' parameter will become mandatory.", version="1.8")
             try:
+                request = self.resolve_authorization_request(request)
                 grant = self.get_authorization_grant(request)
-            except UnsupportedResponseTypeError as error:
+            except OAuth2Error as error:
                 error.state = request.payload.state
                 return self.handle_error_response(request, error)
 
         try:
             redirect_uri = grant.validate_authorization_request()
+            self.finalize_pushed_authorization_request(grant.request, grant_user)
             args = grant.create_authorization_response(redirect_uri, grant_user)
             response = self.handle_response(*args)
         except OAuth2Error as error:
-            error.state = request.payload.state
+            error.state = grant.request.payload.state
             response = self.handle_error_response(request, error)
 
         grant.execute_hook("after_authorization_response", response)
