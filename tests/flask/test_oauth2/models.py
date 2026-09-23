@@ -71,6 +71,9 @@ class Token(db.Model, OAuth2TokenMixin):
     user_id = db.Column(db.Integer, db.ForeignKey("user.id", ondelete="CASCADE"))
     user = db.relationship("User")
 
+    #: JWK thumbprint of the DPoP key this token is bound to (cnf.jkt)
+    dpop_jkt = db.Column(db.String(64))
+
     def is_refresh_token_active(self):
         return not self.refresh_token_revoked_at
 

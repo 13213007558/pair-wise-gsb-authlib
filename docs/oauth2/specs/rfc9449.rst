@@ -1,0 +1,91 @@
+.. _specs/rfc9449:
+
+RFC9449: OAuth 2.0 Demonstrating Proof of Possession (DPoP)
+===========================================================
+
+.. meta::
+    :description: API references on RFC9449 OAuth 2.0 Demonstrating Proof
+        of Possession (DPoP) implementation, guide on how to add it to
+        OAuth 2.0 authorization server and resource server.
+
+RFC9449_ defines a mechanism for sender-constraining OAuth 2.0 tokens
+via a proof-of-possession mechanism on the application level. A client
+proves possession of a private key by signing a DPoP proof JWT; tokens
+issued to the client are bound to the corresponding public key, so a
+leaked token can not be used without the key.
+
+.. _RFC9449: https://www.rfc-editor.org/rfc/rfc9449
+
+.. module:: authlib.oauth2.rfc9449
+
+
+State storage
+-------------
+
+Nonce handling and replay detection require a storage, which is
+provided by the application. Implement :class:`DPoPStateStore` with
+your own database or cache. ``register_jti`` MUST be atomic, so that
+the same proof arriving concurrently succeeds at most once::
+
+    from authlib.oauth2.rfc9449 import DPoPStateStore
+
+
+    class MyDPoPStateStore(DPoPStateStore):
+        def get_nonce(self):
+            # return the nonce the server currently requires, or None
+            return None
+
+        def register_jti(self, jkt, jti, expires_at):
+            # atomically insert (jkt, jti), return False if it exists
+            ...
+
+
+Token endpoint
+--------------
+
+Register :class:`DPoPExtension` on the ``authorization_code`` and
+``refresh_token`` grants. When a valid ``DPoP`` proof is presented
+with the token request, the issued token gets ``token_type=DPoP`` and
+a ``dpop_jkt`` member with the JWK thumbprint of the proof key (the
+``cnf.jkt`` confirmation value). Persist ``dpop_jkt`` together with
+the token::
+
+    from authlib.oauth2.rfc9449 import DPoPExtension
+
+    store = MyDPoPStateStore()
+    server.register_grant(AuthorizationCodeGrant, [DPoPExtension(store)])
+    server.register_grant(RefreshTokenGrant, [DPoPExtension(store)])
+
+
+    def save_token(token, request):
+        jkt = token.pop("dpop_jkt", None)
+        item = Token(dpop_jkt=jkt, **token)
+        ...
+
+A refresh token issued for a DPoP bound token stays bound to the same
+key: a refresh request without a proof, or with a proof of another
+key, is rejected.
+
+
+Resource server
+---------------
+
+Register :class:`DPoPTokenValidator` into the resource protector.
+Clients access the resource with the ``DPoP`` authorization scheme and
+a ``DPoP`` proof header. The validator checks the proof signature,
+``typ``, asymmetric ``alg``, ``htm``, ``htu``, ``iat``, ``jti`` and
+the ``ath`` claim, and requires the proof key to match the ``cnf.jkt``
+binding of the access token::
+
+    from authlib.oauth2.rfc9449 import DPoPTokenValidator
+
+
+    class MyDPoPTokenValidator(DPoPTokenValidator):
+        def authenticate_token(self, token_string):
+            return Token.query.filter_by(access_token=token_string).first()
+
+
+    require_oauth.register_token_validator(MyDPoPTokenValidator(store=store))
+
+Both classes accept a ``clock`` callable to control the current time,
+e.g. in tests.
