@@ -31,6 +31,7 @@ class AuthorizationServer(Hookable):
         self._token_grants = []
         self._endpoints = {}
         self._extensions = []
+        self._authorization_details_handlers = {}
 
     def query_client(self, client_id):
         """Query OAuth client by client_id. The client model class MUST
@@ -152,6 +153,34 @@ class AuthorizationServer(Hookable):
             self._client_auth = ClientAuthentication(self.query_client)
 
         self._client_auth.register(method, func)
+
+    def register_authorization_details_handler(self, handler):
+        """Register a handler for an RFC 9396 authorization details type.
+        The handler validates entries of its `type`, decides if a consent
+        result only narrows the request, and if subsequent requests stay
+        within the granted details::
+
+            class DatasetAccessHandler(AuthorizationDetailsHandler):
+                type = "dataset_access"
+                # ...
+
+
+            authorization_server.register_authorization_details_handler(
+                DatasetAccessHandler()
+            )
+
+        :param handler: an
+            :class:`authlib.oauth2.rfc9396.AuthorizationDetailsHandler`
+            instance or class.
+        """
+        if isinstance(handler, type):
+            handler = handler()
+        self._authorization_details_handlers[handler.type] = handler
+
+    def get_authorization_details_handler(self, details_type):
+        """Get the registered authorization details handler for the given
+        type, or None if no handler was registered for it."""
+        return self._authorization_details_handlers.get(details_type)
 
     def register_extension(self, extension):
         self._extensions.append(extension(self))

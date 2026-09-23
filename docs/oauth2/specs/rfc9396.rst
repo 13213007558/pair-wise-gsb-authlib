@@ -1,0 +1,84 @@
+.. _specs/rfc9396:
+
+RFC9396: OAuth 2.0 Rich Authorization Requests
+==============================================
+
+This section contains the generic implementation of :rfc:`RFC9396 <9396>`.
+
+RFC 9396 extends the `scope` parameter with a fine-grained
+`authorization_details` JSON array. Every entry in the array has a
+`type`, and every type has its own validation and permission rules.
+The framework parses the JSON array, checks the `type` field, rejects
+unknown types and carries the granted details through the flows. The
+type-specific rules live in a
+:class:`~authlib.oauth2.rfc9396.AuthorizationDetailsHandler` subclass
+that is registered on the authorization server::
+
+    from authlib.oauth2.rfc9396 import AuthorizationDetailsHandler
+
+    class DatasetAccessHandler(AuthorizationDetailsHandler):
+        type = "dataset_access"
+
+        def validate(self, detail):
+            # validate one detail entry of this type
+            ...
+
+        def is_narrower(self, requested, consented):
+            # may the consented version be saved instead of the request?
+            ...
+
+        def is_within(self, granted, requested):
+            # is a subsequent request covered by the granted details?
+            ...
+
+    authorization_server.register_authorization_details_handler(
+        DatasetAccessHandler()
+    )
+
+A ready-made demonstration handler
+:class:`~authlib.oauth2.rfc9396.DatasetAccessHandler` is shipped with
+Authlib. Its `locations` and `actions` sets can only be narrowed down.
+
+The parsed request details are available to the consent page on
+`grant.request.authorization_details`. The resource owner's decision is
+passed back on `grant.request.consented_authorization_details` before
+creating the authorization response::
+
+    grant = server.get_consent_grant(end_user=user)
+    if request.method == "GET":
+        return render_template(
+            "consent.html", details=grant.request.authorization_details
+        )
+    grant.request.consented_authorization_details = consented_details
+    return server.create_authorization_response(grant=grant, grant_user=user)
+
+The consented version is validated to only narrow the request, deep
+copied, and saved with the authorization code. It is then used when the
+code is exchanged for a token, when the token is refreshed, and in the
+token response. A refresh request MAY carry a further narrowed
+`authorization_details` parameter, but it can never exceed the granted
+details, otherwise an `invalid_authorization_details` error is
+returned. Malformed JSON and structural problems are reported as
+`invalid_request` instead.
+
+API Reference
+-------------
+
+.. module:: authlib.oauth2.rfc9396
+
+.. autoclass:: AuthorizationDetailsHandler
+    :member-order: bysource
+    :members:
+
+.. autoclass:: DatasetAccessHandler
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InvalidAuthorizationDetailsError
+
+.. autofunction:: parse_authorization_details
+
+.. autofunction:: validate_consented_details
+
+.. autofunction:: validate_within_granted
+

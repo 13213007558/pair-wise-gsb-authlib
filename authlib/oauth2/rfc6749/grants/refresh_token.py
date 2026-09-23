@@ -7,8 +7,11 @@ Access Token per `Section 6`_.
 .. _`Section 6`: https://tools.ietf.org/html/rfc6749#section-6
 """
 
+import copy
 import logging
 
+from ...rfc9396 import parse_authorization_details
+from ...rfc9396 import validate_within_granted
 from ..errors import InvalidGrantError
 from ..errors import InvalidRequestError
 from ..errors import InvalidScopeError
@@ -70,6 +73,17 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
         if not original_scope.issuperset(set(scope_to_list(scope))):
             raise InvalidScopeError()
 
+    def _validate_token_authorization_details(self, token):
+        value = self.request.payload.data.get("authorization_details")
+        if value is None:
+            return
+        requested = parse_authorization_details(value, self.server)
+        if not requested:
+            return
+        granted = token.get_authorization_details()
+        validate_within_granted(granted, requested, self.server)
+        self.request.authorization_details = requested
+
     def validate_token_request(self):
         """If the authorization server issued a refresh token to the client, the
         client makes a refresh request to the token endpoint by adding the
@@ -108,6 +122,7 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
         self.request.client = client
         refresh_token = self._validate_request_token(client)
         self._validate_token_scope(refresh_token)
+        self._validate_token_authorization_details(refresh_token)
         self.request.refresh_token = refresh_token
 
     @hooked
@@ -141,6 +156,11 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
             scope=scope,
             include_refresh_token=self.INCLUDE_NEW_REFRESH_TOKEN,
         )
+        authorization_details = self.request.authorization_details
+        if authorization_details is None:
+            authorization_details = refresh_token.get_authorization_details()
+        if authorization_details:
+            token["authorization_details"] = copy.deepcopy(authorization_details)
         return token
 
     def authenticate_refresh_token(self, refresh_token):

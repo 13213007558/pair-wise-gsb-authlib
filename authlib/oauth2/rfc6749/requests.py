@@ -91,6 +91,10 @@ class OAuth2Request(OAuth2Payload):
         self.refresh_token = None
         self.credential = None
         self._scope = None
+        #: parsed RFC 9396 authorization details of the request
+        self.authorization_details = None
+        #: authorization details consented by the resource owner
+        self.consented_authorization_details = None
 
     @property
     def args(self):

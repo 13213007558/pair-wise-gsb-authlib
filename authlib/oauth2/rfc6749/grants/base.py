@@ -1,5 +1,6 @@
 from authlib.consts import default_json_headers
 
+from ...rfc9396 import parse_authorization_details
 from ..errors import InvalidRequestError
 from ..hooks import Hookable
 from ..hooks import hooked
@@ -84,6 +85,16 @@ class BaseGrant(Hookable):
         scope = self.request.payload.scope
         return self.server.validate_requested_scope(scope)
 
+    def validate_requested_authorization_details(self):
+        """Validate the RFC 9396 `authorization_details` request parameter.
+        The parsed details are stored on `request.authorization_details` so
+        that the consent page can present them to the resource owner.
+        """
+        value = self.request.payload.data.get("authorization_details")
+        self.request.authorization_details = parse_authorization_details(
+            value, self.server
+        )
+
 
 class TokenEndpointMixin:
     #: Allowed HTTP methods of this token endpoint
@@ -138,7 +149,14 @@ class AuthorizationEndpointMixin:
         .. _`Section 3.1`: https://tools.ietf.org/html/rfc6749#section-3.1
         """
         datalist = request.payload.datalist
-        parameters = ["response_type", "client_id", "redirect_uri", "scope", "state"]
+        parameters = [
+            "response_type",
+            "client_id",
+            "redirect_uri",
+            "scope",
+            "state",
+            "authorization_details",
+        ]
         for param in parameters:
             if len(datalist.get(param, [])) > 1:
                 raise InvalidRequestError(
