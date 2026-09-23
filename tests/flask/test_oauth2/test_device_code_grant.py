@@ -1,3 +1,4 @@
+import threading
 import time
 
 import pytest
@@ -71,6 +72,23 @@ class DeviceCodeGrant(_DeviceCodeGrant):
 
     def should_slow_down(self, credential):
         return False
+
+    def consume_device_credential(self, credential):
+        device_code = credential["device_code"]
+        with _consumed_lock:
+            if device_code in _consumed_device_codes:
+                return False
+            _consumed_device_codes.add(device_code)
+            return True
+
+
+_consumed_device_codes = set()
+_consumed_lock = threading.Lock()
+
+
+@pytest.fixture(autouse=True)
+def clear_consumed_device_codes():
+    _consumed_device_codes.clear()
 
 
 saved_credentials = []
@@ -234,6 +252,22 @@ def test_get_access_token(test_client):
     )
     resp = json.loads(rv.data)
     assert "access_token" in resp
+
+
+def test_device_code_can_only_be_exchanged_once(test_client):
+    data = {
+        "grant_type": DeviceCodeGrant.GRANT_TYPE,
+        "device_code": "grant-code",
+        "client_id": "client-id",
+    }
+    rv = test_client.post("/oauth/token", data=data)
+    resp = json.loads(rv.data)
+    assert "access_token" in resp
+
+    # a second exchange of the same device_code is rejected
+    rv = test_client.post("/oauth/token", data=data)
+    resp = json.loads(rv.data)
+    assert resp["error"] == "invalid_grant"
 
 
 def test_missing_client_id(test_client):

@@ -81,6 +81,29 @@ But first, we need to implement the missing methods::
 Note ``query_user_grant``, we are fetching data from redis. This data
 was saved from verification endpoint when end user granted the request.
 
+The default ``should_slow_down`` implementation relies on two atomic
+storage operations that developers MUST implement:
+
+.. code-block:: python
+
+    class MyDeviceCodeGrant(DeviceCodeGrant):
+        def touch_device_credential(self, credential, now):
+            # atomically record this poll and return the previous poll
+            # time (None on the first poll); raise on storage failure
+            ...
+
+        def consume_device_credential(self, credential):
+            # atomically mark the credential as consumed; return True if
+            # this call consumed it, False if it was already consumed
+            ...
+
+A ``device_code`` can be exchanged for an access token only once. The
+grant consumes the credential atomically before issuing any token, so
+concurrent polls can never redeem the same ``device_code`` twice; the
+losing request receives an ``invalid_grant`` error. Storage failures in
+these methods MUST raise an exception, they are never treated as "the
+user has not approved yet".
+
 Verification Endpoint
 ---------------------
 

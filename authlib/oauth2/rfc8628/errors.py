@@ -28,3 +28,14 @@ class ExpiredTokenError(OAuth2Error):
     """
 
     error = "expired_token"
+
+
+class DeviceCodeConsumedError(OAuth2Error):
+    """The "device_code" has already been consumed. A device code can be
+    exchanged for an access token only once; a concurrent or repeated
+    exchange attempt after a successful one receives this error instead
+    of a second access token.
+    """
+
+    error = "invalid_grant"
+    description = "The 'device_code' has already been consumed"

@@ -1,4 +1,5 @@
 import logging
+import time
 
 from ..rfc6749 import BaseGrant
 from ..rfc6749 import TokenEndpointMixin
@@ -7,6 +8,7 @@ from ..rfc6749.errors import InvalidRequestError
 from ..rfc6749.errors import UnauthorizedClientError
 from ..rfc6749.hooks import hooked
 from .errors import AuthorizationPendingError
+from .errors import DeviceCodeConsumedError
 from .errors import ExpiredTokenError
 from .errors import SlowDownError
 
@@ -108,6 +110,14 @@ class DeviceCodeGrant(BaseGrant, TokenEndpointMixin):
             raise UnauthorizedClientError()
 
         user = self.validate_device_credential(credential)
+
+        # Atomically mark the credential as consumed *before* issuing any
+        # token, so that two concurrent polls can never both redeem the
+        # same device_code. The losing request stops here and never reaches
+        # the token generator.
+        if not self.consume_device_credential(credential):
+            raise DeviceCodeConsumedError()
+
         self.request.user = user
         self.request.client = client
         self.request.credential = credential
@@ -147,6 +157,35 @@ class DeviceCodeGrant(BaseGrant, TokenEndpointMixin):
 
         raise AuthorizationPendingError()
 
+    def get_current_time(self):
+        """Return the current time in seconds, used to decide between
+        ``authorization_pending`` and ``slow_down``. Tests and subclasses
+        may override this method with a controllable clock.
+        """
+        return time.time()
+
+    def should_slow_down(self, credential):
+        """The authorization request is still pending and polling should
+        continue, but the interval MUST be increased by 5 seconds for this
+        and all subsequent requests.
+
+        The default implementation records the current poll through the
+        atomic :meth:`touch_device_credential` storage operation and
+        compares the timestamp of the previous poll with the credential's
+        own ``interval`` (issued by ``DeviceAuthorizationEndpoint``, never
+        hardcoded in this grant). Developers may override this method to
+        customize the policy.
+        """
+        now = self.get_current_time()
+        last_poll_at = self.touch_device_credential(credential, now)
+        if last_poll_at is None:
+            # first poll of this device_code
+            return False
+        interval = credential.get_interval()
+        if interval is None:
+            return False
+        return now - last_poll_at < interval
+
     def query_device_credential(self, device_code):
         """Get device credential from previously savings via ``DeviceAuthorizationEndpoint``.
         Developers MUST implement it in subclass::
@@ -177,9 +216,51 @@ class DeviceCodeGrant(BaseGrant, TokenEndpointMixin):
         """
         raise NotImplementedError()
 
-    def should_slow_down(self, credential):
-        """The authorization request is still pending and polling should
-        continue, but the interval MUST be increased by 5 seconds for this
-        and all subsequent requests.
+    def touch_device_credential(self, credential, now):
+        """Atomically record that the client polled the token endpoint at
+        ``now``, and return the timestamp of the previous poll, or ``None``
+        if this is the first poll. Developers MUST implement it in subclass::
+
+            def touch_device_credential(self, credential, now):
+                with atomic_transaction():
+                    last_poll_at = credential.last_poll_at
+                    credential.last_poll_at = now
+                    credential.save()
+                return last_poll_at
+
+        This method MUST be atomic, since a device usually polls the token
+        endpoint repeatedly, possibly with concurrent requests. It MUST
+        raise an exception if the storage operation fails; a storage
+        failure is never treated as "the user has not approved yet".
+
+        :param credential: the DeviceCredential instance
+        :param now: the current poll time, in seconds
+        :return: the previous poll time, or None
+        """
+        raise NotImplementedError()
+
+    def consume_device_credential(self, credential):
+        """Atomically mark the device credential as consumed, and return
+        ``True`` if this call performed the consumption. Return ``False``
+        if the credential had already been consumed, in which case the
+        grant rejects the request with an "invalid_grant" error and no
+        token is generated. Developers MUST implement it in subclass::
+
+            def consume_device_credential(self, credential):
+                rows = db.session.execute(
+                    update(DeviceCredential)
+                    .where(DeviceCredential.device_code == credential.device_code)
+                    .where(DeviceCredential.consumed.is_(False))
+                    .values(consumed=True)
+                ).rowcount
+                db.session.commit()
+                return rows == 1
+
+        This method MUST be atomic, so that a device_code can be exchanged
+        for an access token only once, even under concurrent polling. It
+        MUST raise an exception if the storage operation fails.
+
+        :param credential: the DeviceCredential instance
+        :return: True if consumed by this call, False if already consumed
         """
         raise NotImplementedError()

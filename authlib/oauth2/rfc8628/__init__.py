@@ -11,6 +11,7 @@ from .device_code import DEVICE_CODE_GRANT_TYPE
 from .device_code import DeviceCodeGrant
 from .endpoint import DeviceAuthorizationEndpoint
 from .errors import AuthorizationPendingError
+from .errors import DeviceCodeConsumedError
 from .errors import ExpiredTokenError
 from .errors import SlowDownError
 from .models import DeviceCredentialDict
@@ -23,6 +24,7 @@ __all__ = [
     "DeviceCredentialMixin",
     "DeviceCredentialDict",
     "AuthorizationPendingError",
+    "DeviceCodeConsumedError",
     "SlowDownError",
     "ExpiredTokenError",
 ]

@@ -11,6 +11,13 @@ class DeviceCredentialMixin:
     def get_user_code(self):
         raise NotImplementedError()
 
+    def get_interval(self):
+        """The minimum amount of time in seconds that the client SHOULD
+        wait between polling requests to the token endpoint. Return
+        ``None`` if no polling interval is enforced.
+        """
+        raise NotImplementedError()
+
     def is_expired(self):
         raise NotImplementedError()
 
@@ -30,6 +37,9 @@ class DeviceCredentialDict(dict, DeviceCredentialMixin):
 
     def get_auth_time(self):
         return self.get("auth_time")
+
+    def get_interval(self):
+        return self.get("interval")
 
     def is_expired(self):
         expires_at = self.get("expires_at")
