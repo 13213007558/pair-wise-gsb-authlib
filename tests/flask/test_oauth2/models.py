@@ -70,6 +70,7 @@ class Token(db.Model, OAuth2TokenMixin):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id", ondelete="CASCADE"))
     user = db.relationship("User")
+    cnf = db.Column(db.JSON, nullable=True)
 
     def is_refresh_token_active(self):
         return not self.refresh_token_revoked_at
