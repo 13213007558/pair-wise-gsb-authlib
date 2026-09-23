@@ -9,6 +9,7 @@ Specifications
     rfc7009
     rfc7523
     id-jag
+    jarm
     rfc7591
     rfc7592
     rfc7636

@@ -11,6 +11,14 @@ Version 1.x.x
 
 **Unreleased**
 
+- Add support for the JWT Secured Authorization Response Mode (JARM) with
+  the ``query.jwt`` and ``form_post.jwt`` response modes. The
+  authorization server can sign authorization responses (including
+  redirectable errors) into a JWT ``response`` parameter, and the Flask
+  client integration verifies the signature, algorithm, issuer, audience
+  and expiration before checking the ``state``. See :ref:`specs/jarm`
+  for details.
+
 - Add support for the Identity Assertion JWT Authorization Grant (ID-JAG),
   a draft extension to :rfc:`7523` for cross-application access using identity
   assertions issued by an external enterprise IdP.
