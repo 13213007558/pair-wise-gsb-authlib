@@ -1,0 +1,99 @@
+.. _specs/rfc8707:
+
+RFC8707: Resource Indicators for OAuth 2.0
+==========================================
+
+.. meta::
+    :description: API references on RFC8707 Resource Indicators for OAuth 2.0
+        implementation, guide on how to add it to OAuth 2.0 authorization
+        server.
+
+RFC8707_ lets clients signal to the authorization server which protected
+resources they intend to access, with a ``resource`` parameter on the
+authorization endpoint and on the token endpoint. The authorization server
+can then restrict the issued tokens to those resources, so that a token
+issued for one resource server can not be replayed against another one.
+
+.. _RFC8707: https://www.rfc-editor.org/rfc/rfc8707.html
+
+.. module:: authlib.oauth2.rfc8707
+
+The ``resource`` parameter can be repeated, and each value MUST be an
+absolute URI without a fragment component. Requests that do not satisfy
+those requirements are rejected with an ``invalid_target`` error, both at
+the authorization endpoint and at the token endpoint.
+
+Using ResourceIndicator in Authorization Code Grant
+---------------------------------------------------
+
+Register the :class:`ResourceIndicator` extension on the authorization code
+grant, and on the refresh token grant so that refreshed tokens can not
+escape the resources that were originally granted::
+
+    from authlib.oauth2.rfc8707 import ResourceIndicator
+
+    server.register_grant(AuthorizationCodeGrant, [ResourceIndicator()])
+    server.register_grant(RefreshTokenGrant, [ResourceIndicator()])
+
+The resources consented by the resource owner are available as
+``request.resources`` when the authorization code is saved. Developers MUST
+persist them with the authorization code, and expose them with a
+``get_resources`` method::
+
+    class MyAuthorizationCodeGrant(AuthorizationCodeGrant):
+        def save_authorization_code(self, code, request):
+            auth_code = AuthorizationCode(
+                code=code,
+                client_id=request.client.client_id,
+                redirect_uri=request.payload.redirect_uri,
+                scope=request.scope,
+                user_id=request.user.id,
+                resources=" ".join(request.resources or []),
+            )
+            auth_code.save()
+            return auth_code
+
+    class AuthorizationCode(AuthorizationCodeMixin):
+        def get_resources(self):
+            return self.resources.split() if self.resources else []
+
+When the token request does not contain any ``resource`` parameter, the
+default selection policy configured on the extension applies. The policy
+can be a list of resource URIs, or a callable with the signature
+``default_resources(grant, resources)``. It can only narrow the granted
+resources, never expand them::
+
+    ResourceIndicator(default_resources=["https://docs-api.example.org"])
+
+The application decides which resources can be authorized together with the
+``validate_resources`` parameter, a callable with the signature
+``validate_resources(grant, resources)`` which must return a truthy value
+to accept the request::
+
+    def validate_resources(grant, resources):
+        return "https://admin-api.example.org" not in resources
+
+    ResourceIndicator(validate_resources=validate_resources)
+
+At the token endpoint, the client can select a subset of the granted
+resources with the ``resource`` parameter. Requesting a resource that was
+not granted is rejected with an ``invalid_target`` error. The same rule
+applies to the refresh token grant: refreshing a token can only narrow its
+resources.
+
+The selected resources are passed to the token generator, so that RFC9068_
+JWT access tokens carry them in their ``aud`` claim. Resource servers
+validating the ``aud`` claim with
+:class:`~authlib.oauth2.rfc9068.JWTBearerTokenValidator` will reject tokens
+that were not issued for them.
+
+.. _RFC9068: https://www.rfc-editor.org/rfc/rfc9068.html
+
+API Reference
+-------------
+
+.. autoclass:: ResourceIndicator
+    :members:
+
+.. autoclass:: InvalidTargetError
+

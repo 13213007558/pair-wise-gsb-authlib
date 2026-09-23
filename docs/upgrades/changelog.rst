@@ -11,6 +11,12 @@ Version 1.x.x
 
 **Unreleased**
 
+- Add support for :rfc:`8707` Resource Indicators for OAuth 2.0. The new
+  :class:`~authlib.oauth2.rfc8707.ResourceIndicator` grant extension
+  validates the ``resource`` parameter on the authorization and token
+  endpoints, and the selected resources are passed to the token generator
+  so that RFC 9068 JWT access tokens carry them in their ``aud`` claim.
+  See :ref:`specs/rfc8707` for details.
 - Add support for the Identity Assertion JWT Authorization Grant (ID-JAG),
   a draft extension to :rfc:`7523` for cross-application access using identity
   assertions issued by an external enterprise IdP.

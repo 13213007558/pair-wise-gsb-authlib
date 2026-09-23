@@ -51,6 +51,7 @@ class AuthorizationServer(Hookable):
         scope=None,
         expires_in=None,
         include_refresh_token=True,
+        resources=None,
     ):
         """Generate the token dict.
 
@@ -60,6 +61,8 @@ class AuthorizationServer(Hookable):
         :param expires_in: if provided, use this value as expires_in.
         :param scope: current requested scope.
         :param include_refresh_token: should refresh_token be included.
+        :param resources: optional list of resource indicators selected for
+            this token, per RFC 8707.
         :return: Token dict
         """
         # generator for a specified grant type
@@ -69,6 +72,17 @@ class AuthorizationServer(Hookable):
             func = self._token_generators.get("default")
         if not func:
             raise RuntimeError("No configured token generator")
+
+        if resources is not None:
+            return func(
+                grant_type=grant_type,
+                client=client,
+                user=user,
+                scope=scope,
+                expires_in=expires_in,
+                include_refresh_token=include_refresh_token,
+                resources=resources,
+            )
 
         return func(
             grant_type=grant_type,

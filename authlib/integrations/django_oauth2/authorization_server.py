@@ -55,6 +55,11 @@ class AuthorizationServer(_AuthorizationServer):
         else:
             user_id = client.user_id
         item = self.token_model(client_id=client.client_id, user_id=user_id, **token)
+        # persist the RFC 8707 resources selected for this token, so that
+        # refresh token requests can be checked against them
+        resources = getattr(request, "resources", None)
+        if resources is not None and hasattr(item, "resources"):
+            item.resources = " ".join(resources)
         item.save()
         return item
 

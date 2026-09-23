@@ -91,6 +91,8 @@ class OAuth2Request(OAuth2Payload):
         self.refresh_token = None
         self.credential = None
         self._scope = None
+        #: resources selected for token generation, per RFC 8707
+        self.resources = None
 
     @property
     def args(self):

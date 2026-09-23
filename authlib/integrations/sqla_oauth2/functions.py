@@ -31,6 +31,11 @@ def create_save_token_func(session, token_model):
             user_id = None
         client = request.client
         item = token_model(client_id=client.client_id, user_id=user_id, **token)
+        # persist the RFC 8707 resources selected for this token, so that
+        # refresh token requests can be checked against them
+        resources = getattr(request, "resources", None)
+        if resources is not None and hasattr(item, "resources"):
+            item.resources = " ".join(resources)
         session.add(item)
         session.commit()
 
