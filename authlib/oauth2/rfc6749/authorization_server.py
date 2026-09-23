@@ -269,6 +269,8 @@ class AuthorizationServer(Hookable):
         try:
             request.user = end_user
 
+            self.resolve_pushed_authorization_request(request)
+
             grant = self.get_authorization_grant(request)
             grant.validate_no_multiple_request_parameter(request)
             grant.validate_consent_request()
@@ -280,6 +282,36 @@ class AuthorizationServer(Hookable):
             error.state = request.payload.state
             raise
         return grant
+
+    def resolve_pushed_authorization_request(self, request):
+        """Resolve an authorization request referencing a RFC 9126 pushed
+        authorization request with a `request_uri` parameter. The request
+        parameters are replaced by the pushed ones. Does nothing if no
+        `request_uri` is present or if no pushed authorization request
+        endpoint is registered.
+
+        :param request: OAuth2Request instance.
+        """
+        request_uri = request.payload.data.get("request_uri")
+        if not request_uri:
+            return
+        endpoints = self._endpoints.get("pushed_authorization_request")
+        if endpoints:
+            endpoints[0].resolve_authorization_request(request)
+
+    def consume_pushed_authorization_request(self, request):
+        """Consume the RFC 9126 pushed authorization request referenced by
+        the given request, so it cannot be exchanged for an authorization
+        response twice. Does nothing for regular authorization requests.
+
+        :param request: OAuth2Request instance.
+        """
+        request_uri = getattr(request, "pushed_request_uri", None)
+        if not request_uri:
+            return
+        endpoints = self._endpoints.get("pushed_authorization_request")
+        if endpoints:
+            endpoints[0].consume_authorization_request(request_uri)
 
     def get_token_grant(self, request):
         """Find the token grant for current request.
@@ -370,6 +402,11 @@ class AuthorizationServer(Hookable):
         if not isinstance(request, OAuth2Request):
             request = self.create_oauth2_request(request)
 
+        try:
+            self.resolve_pushed_authorization_request(request)
+        except OAuth2Error as error:
+            return self.handle_error_response(request, error)
+
         if not grant:
             deprecate("The 'grant' parameter will become mandatory.", version="1.8")
             try:
@@ -380,6 +417,7 @@ class AuthorizationServer(Hookable):
 
         try:
             redirect_uri = grant.validate_authorization_request()
+            self.consume_pushed_authorization_request(grant.request)
             args = grant.create_authorization_response(redirect_uri, grant_user)
             response = self.handle_response(*args)
         except OAuth2Error as error:

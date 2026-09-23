@@ -135,9 +135,8 @@ class OAuth2ClientMixin(ClientMixin):
         return secrets.compare_digest(self.client_secret, client_secret)
 
     def check_endpoint_auth_method(self, method, endpoint):
-        if endpoint == "token":
+        if endpoint in ("token", "pushed_authorization_request"):
             return self.token_endpoint_auth_method == method
-        # TODO
         return True
 
     def check_response_type(self, response_type):

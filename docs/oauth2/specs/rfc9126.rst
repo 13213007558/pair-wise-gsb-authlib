@@ -1,0 +1,86 @@
+.. _specs/rfc9126:
+
+RFC9126: OAuth 2.0 Pushed Authorization Requests
+=================================================
+
+This section contains the generic implementation of :rfc:`RFC9126 <9126>`.
+
+With Pushed Authorization Requests (PAR), clients POST the complete
+authorization request to the authorization server first, and receive a
+short-lived ``request_uri`` reference in exchange. The user-agent then only
+carries ``client_id`` and ``request_uri`` to the authorization endpoint,
+so the request parameters are not exposed to the browser and cannot be
+modified on the way.
+
+Authorization Server
+--------------------
+
+Register the endpoint on the authorization server, then route the HTTP
+requests to it::
+
+    from authlib.oauth2.rfc9126 import PushedAuthorizationRequest
+
+    server.register_endpoint(PushedAuthorizationRequest())
+
+    @app.route("/oauth/par", methods=["POST"])
+    def pushed_authorization_request():
+        return server.create_endpoint_response("pushed_authorization_request")
+
+The endpoint authenticates the client the same way as the token endpoint
+(public clients use the ``none`` method) and validates the pushed
+parameters exactly as the authorization endpoint would. The response
+contains a ``request_uri`` and its ``expires_in`` lifetime, never the
+request parameters themselves.
+
+Once the endpoint is registered, authorization requests carrying a
+``request_uri`` are resolved automatically: the pushed parameters replace
+the user-agent supplied ones, the ``client_id`` must match the client that
+pushed the request, and a pushed request can only be exchanged for one
+authorization response.
+
+Storage
+-------
+
+By default, pushed requests are kept in memory. Production servers should
+provide their own storage by implementing
+:class:`PushedAuthorizationRequestStore`::
+
+    from authlib.oauth2.rfc9126 import PushedAuthorizationRequestStore
+
+
+    class MyStore(PushedAuthorizationRequestStore):
+        def get(self, request_uri): ...
+
+        def save(self, request_uri, client_id, data, expires_in): ...
+
+        def delete(self, request_uri): ...
+
+        def consume(self, request_uri): ...
+
+
+    server.register_endpoint(PushedAuthorizationRequest(store=MyStore()))
+
+Server Metadata
+---------------
+
+The PAR endpoint can be advertised in the authorization server metadata
+(:ref:`specs/rfc8414`) with the ``pushed_authorization_request_endpoint``
+value, and clients can be required to use PAR with the
+``require_pushed_authorization_requests`` boolean value.
+
+API Reference
+-------------
+
+.. module:: authlib.oauth2.rfc9126
+
+.. autoclass:: PushedAuthorizationRequest
+    :member-order: bysource
+    :members:
+
+.. autoclass:: PushedAuthorizationRequestStore
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InMemoryPushedAuthorizationRequestStore
+    :member-order: bysource
+    :members:

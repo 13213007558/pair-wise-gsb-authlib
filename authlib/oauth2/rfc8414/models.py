@@ -42,6 +42,8 @@ class AuthorizationServerMetadata(dict):
         "introspection_endpoint_auth_methods_supported",
         "introspection_endpoint_auth_signing_alg_values_supported",
         "code_challenge_methods_supported",
+        "pushed_authorization_request_endpoint",
+        "require_pushed_authorization_requests",
     ]
 
     def validate_issuer(self):
@@ -325,6 +327,25 @@ class AuthorizationServerMetadata(dict):
         does not support PKCE.
         """
         validate_array_value(self, "code_challenge_methods_supported")
+
+    def validate_pushed_authorization_request_endpoint(self):
+        """OPTIONAL. URL of the authorization server's pushed authorization
+        request endpoint [RFC9126], to which clients POST authorization
+        requests in exchange for a `request_uri` reference.
+        """
+        url = self.get("pushed_authorization_request_endpoint")
+        if url and not is_secure_transport(url):
+            raise ValueError(
+                '"pushed_authorization_request_endpoint" MUST use "https" scheme'
+            )
+
+    def validate_require_pushed_authorization_requests(self):
+        """OPTIONAL. Boolean parameter indicating whether the authorization
+        server accepts authorization requests only via the pushed
+        authorization request endpoint [RFC9126]. If omitted, the default
+        value is false.
+        """
+        validate_boolean_value(self, "require_pushed_authorization_requests")
 
     @property
     def response_modes_supported(self):

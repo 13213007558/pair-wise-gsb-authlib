@@ -464,6 +464,42 @@ def test_validate_code_challenge_methods_supported():
     metadata.validate_code_challenge_methods_supported()
 
 
+def test_validate_pushed_authorization_request_endpoint():
+    metadata = AuthorizationServerMetadata()
+    metadata.validate_pushed_authorization_request_endpoint()
+
+    # not https
+    metadata = AuthorizationServerMetadata(
+        {"pushed_authorization_request_endpoint": "http://provider.test/par"}
+    )
+    with pytest.raises(ValueError, match="https"):
+        metadata.validate_pushed_authorization_request_endpoint()
+
+    # valid
+    metadata = AuthorizationServerMetadata(
+        {"pushed_authorization_request_endpoint": "https://provider.test/par"}
+    )
+    metadata.validate_pushed_authorization_request_endpoint()
+
+
+def test_validate_require_pushed_authorization_requests():
+    metadata = AuthorizationServerMetadata()
+    metadata.validate_require_pushed_authorization_requests()
+
+    # not boolean
+    metadata = AuthorizationServerMetadata(
+        {"require_pushed_authorization_requests": "yes"}
+    )
+    with pytest.raises(ValueError, match="boolean"):
+        metadata.validate_require_pushed_authorization_requests()
+
+    # valid
+    metadata = AuthorizationServerMetadata(
+        {"require_pushed_authorization_requests": True}
+    )
+    metadata.validate_require_pushed_authorization_requests()
+
+
 def test_validate_with_metadata_classes():
     """Test that validate() can compose metadata extension classes."""
 
