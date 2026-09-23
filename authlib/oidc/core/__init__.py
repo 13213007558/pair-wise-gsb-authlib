@@ -18,6 +18,7 @@ from .grants import OpenIDImplicitGrant
 from .grants import OpenIDToken
 from .models import AuthorizationCodeMixin
 from .userinfo import UserInfoEndpoint
+from .userinfo import filter_userinfo_claims
 
 __all__ = [
     "AuthorizationCodeMixin",
@@ -27,6 +28,7 @@ __all__ = [
     "HybridIDToken",
     "UserInfo",
     "UserInfoEndpoint",
+    "filter_userinfo_claims",
     "get_claim_cls_by_response_type",
     "OpenIDToken",
     "OpenIDCode",

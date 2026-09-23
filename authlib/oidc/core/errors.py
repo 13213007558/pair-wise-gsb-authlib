@@ -85,3 +85,34 @@ class RegistrationNotSupportedError(OAuth2Error):
     """The OP does not support use of the registration parameter."""
 
     error = "registration_not_supported"
+
+
+class UnsupportedUserInfoResponseAlgError(OAuth2Error):
+    """The client registered a UserInfo response algorithm (signing or
+    encryption) that the authorization server does not support."""
+
+    error = "unsupported_userinfo_response_alg"
+    description = "The registered userinfo response algorithm is not supported"
+
+
+class MissingSigningKeyError(OAuth2Error):
+    """The server has no usable signing key to build a JWT UserInfo response."""
+
+    error = "missing_signing_key"
+    description = "No signing key is available for the userinfo endpoint"
+
+
+class MissingClientPublicKeyError(OAuth2Error):
+    """The client did not register a public key usable for encrypting
+    UserInfo responses."""
+
+    error = "missing_client_public_key"
+    description = "The client has no usable encryption public key"
+
+
+class IssuerMismatchError(OAuth2Error):
+    """The client was registered for a different issuer than the one of
+    this authorization server."""
+
+    error = "issuer_mismatch"
+    description = "The client is registered with a different issuer"
