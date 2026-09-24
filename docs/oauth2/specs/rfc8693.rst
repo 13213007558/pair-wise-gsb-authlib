@@ -1,0 +1,80 @@
+.. _specs/rfc8693:
+
+RFC8693: OAuth 2.0 Token Exchange
+=================================
+
+.. meta::
+    :description: Python API references on RFC8693 TokenExchangeGrant
+        with Authlib implementation.
+
+.. module:: authlib.oauth2.rfc8693
+
+This section contains the generic implementation of RFC8693_. OAuth 2.0
+Token Exchange allows a client to exchange a subject token (e.g. a
+front-end user token) for a new token, optionally acting on behalf of the
+subject through an actor token (delegation), narrowed to given resources
+and scopes.
+
+Token Exchange Grant
+--------------------
+
+With Authlib ``.register_grant``, we can add ``TokenExchangeGrant`` to the
+authorization server. Developers MUST implement
+``validate_subject_token``, and SHOULD implement ``validate_actor_token``
+to support delegation::
+
+    from authlib.oauth2.rfc8693 import TokenExchangeGrant
+
+    class MyTokenExchangeGrant(TokenExchangeGrant):
+        # audience marking tokens addressed to this authorization server
+        SUBJECT_TOKEN_AUDIENCE = "https://as.example.com"
+        # resources this server may issue tokens for
+        KNOWN_RESOURCES = ["https://reports.example.com"]
+
+        def validate_subject_token(self, subject_token, subject_token_type):
+            # verify signature, expiry, revocation, ... and return claims
+            return decode_and_verify(subject_token)
+
+        def validate_actor_token(self, actor_token, actor_token_type, subject_claims):
+            return decode_and_verify(actor_token)
+
+        def resolve_subject_user(self, subject_claims):
+            return User.query.get(subject_claims["sub"])
+
+    authorization_server.register_grant(MyTokenExchangeGrant)
+
+The grant enforces the RFC 8693 constraints before issuing anything:
+
+- the subject token is validated first, including its audience
+- the actor chain is kept ordered and acyclic; the actor identity is only
+  taken from a validated actor token, never from plain request parameters
+- ``resource`` values must be absolute URIs and can never exceed the
+  resources of the subject token or the server known resources
+- the granted scope is always the intersection of the subject token scope
+  and the server allowed scope; a requested scope can only narrow it
+- an unsupported ``requested_token_type`` yields an ``invalid_request``
+  error instead of falling back to another grant type
+
+The validated delegation is available as ``grant.token_exchange_context``
+(a ``TokenExchangeContext``) and, while the token is being generated,
+through the ``current_token_exchange_context`` context variable. Token
+generators can use it to embed the delegation chain and target resources
+into the issued token::
+
+    from authlib.oauth2.rfc8693 import current_token_exchange_context
+    from authlib.oauth2.rfc9068 import JWTBearerTokenGenerator
+
+    class MyTokenGenerator(JWTBearerTokenGenerator):
+        def get_audiences(self, client, user, scope):
+            ctx = current_token_exchange_context.get()
+            if ctx and ctx.resources:
+                return ctx.resources
+            return super().get_audiences(client, user, scope)
+
+        def get_extra_claims(self, client, grant_type, user, scope):
+            ctx = current_token_exchange_context.get()
+            if ctx and ctx.actors:
+                return {"act": ctx.get_act_claim()}
+            return {}
+
+.. _RFC8693: https://www.rfc-editor.org/rfc/rfc8693
