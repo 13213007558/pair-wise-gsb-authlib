@@ -1,0 +1,89 @@
+.. _specs/rfc8693:
+
+RFC8693: OAuth 2.0 Token Exchange
+=================================
+
+.. meta::
+    :description: API references on RFC8693 OAuth 2.0 Token Exchange of
+        Python implementation, guide on how to create a server that
+        supports delegation with subject and actor tokens.
+
+This section contains the generic Python implementation of RFC8693_.
+
+.. _RFC8693: https://tools.ietf.org/html/rfc8693
+
+.. module:: authlib.oauth2.rfc8693
+
+
+Token Exchange Grant
+--------------------
+
+The token exchange grant lets a client exchange a ``subject_token`` (and
+optionally an ``actor_token``) for a new token that can only narrow the
+original authorization: the ``scope`` of the issued token is the
+intersection of the subject token scope and the scopes permitted by the
+authorization server, and the ``resource`` audience can never exceed the
+audience the subject token was issued for. The delegation is recorded as
+an ordered, acyclic actor chain in the ``act`` claim.
+
+Register the grant with
+:meth:`~authlib.oauth2.rfc6749.AuthorizationServer.register_grant`::
+
+    from authlib.oauth2.rfc8693 import TokenExchangeGrant as Base
+
+    class TokenExchangeGrant(Base):
+        def validate_subject_token(self, subject_token, subject_token_type):
+            # verify the token (JWT or opaque) and return its claims
+            return verify_access_token(subject_token)
+
+        def validate_actor_token(self, actor_token, actor_token_type):
+            return verify_access_token(actor_token)
+
+        def authenticate_user(self, subject):
+            return User.get_by_sub(subject)
+
+        def get_audiences(self):
+            return ["https://as.example.com"]
+
+        def get_permitted_resources(self):
+            return ["https://reports.example.com"]
+
+
+    authorization_server.register_grant(TokenExchangeGrant)
+
+The actor identity is always derived from the authenticated client or a
+validated ``actor_token``; plain request parameters can never forge an
+actor. A request with an unsupported ``requested_token_type`` is rejected
+with an ``invalid_request`` error.
+
+Resource servers can verify the subject, actor chain, audience and scope
+correspondence of exchanged tokens with
+:class:`TokenExchangeBearerTokenValidator`::
+
+    from authlib.oauth2.rfc8693 import TokenExchangeBearerTokenValidator
+
+    class MyValidator(TokenExchangeBearerTokenValidator):
+        def authenticate_token(self, token_string):
+            return Token.query.filter_by(access_token=token_string).first()
+
+
+    require_oauth.register_token_validator(
+        MyValidator(resource_server="https://reports.example.com")
+    )
+
+API Reference
+-------------
+
+.. autoclass:: TokenExchangeGrant
+    :members:
+
+.. autoclass:: TokenExchangeBearerTokenValidator
+    :members:
+
+.. autoclass:: InvalidTargetError
+
+.. autofunction:: parse_actor_chain
+
+.. autofunction:: build_actor_claim
+
+.. autofunction:: ensure_acyclic_actor_chain
