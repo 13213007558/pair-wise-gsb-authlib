@@ -187,6 +187,32 @@ automatically, we can get ``userinfo`` in the ``token``::
 
     userinfo = token['userinfo']
 
+JWKS Caching
+------------
+
+When validating id_token signatures, Authlib caches the provider's JSON
+Web Key Set per (issuer, jwks_uri) instead of downloading it on every
+login. An unknown kid (for example after the provider rotated its signing
+keys) triggers a single refresh; concurrent requests within the same
+refresh window share one HTTP request, and kids that stay unknown after a
+refresh are remembered briefly so that random kid values cannot be used
+to hammer the provider. Cached keys are revalidated with ETag and
+If-None-Match when the server supports it, and if a refresh fails the
+previous key set keeps working for a bounded stale window.
+
+The defaults (1 hour fresh, 1 day stale) can be tuned by assigning a
+JWKSCache to the client::
+
+    from authlib.integrations.base_client.jwks_cache import JWKSCache
+
+    oauth.register("example", ...)
+    oauth.example.jwks_cache = JWKSCache(
+        fresh_period=600,   # serve cached keys without revalidation
+        stale_period=3600,  # extra window to use old keys if refresh fails
+        miss_ttl=30,        # negative cache TTL for unknown kids
+        max_misses=64,      # bound on unknown-kid records
+    )
+
 RP-Initiated Logout
 -------------------
 

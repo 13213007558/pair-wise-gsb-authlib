@@ -30,6 +30,7 @@ def mock_text_response(body, status_code=200):
 def mock_send_value(body, status_code=200):
     resp = mock.MagicMock(spec=requests.Response)
     resp.cookies = []
+    resp.headers = {}
     if isinstance(body, dict):
         resp.json = lambda: body
     else:

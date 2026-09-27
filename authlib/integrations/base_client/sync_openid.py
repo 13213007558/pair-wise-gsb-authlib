@@ -1,3 +1,5 @@
+import logging
+
 from joserfc import jwt
 from joserfc.errors import InvalidKeyIdError
 from joserfc.jwk import KeySet
@@ -9,8 +11,21 @@ from authlib.oidc.core import CodeIDToken
 from authlib.oidc.core import ImplicitIDToken
 from authlib.oidc.core import UserInfo
 
+from .jwks_cache import default_jwks_cache
+from .jwks_cache import extract_token_kid
+from .jwks_cache import key_set_has_kid
+
+log = logging.getLogger(__name__)
+
 
 class OpenIDMixin:
+    #: Optional JWKSCache instance; falls back to a shared process-wide
+    #: cache isolated by (issuer, jwks_uri).
+    jwks_cache = None
+
+    def _get_jwks_cache(self):
+        return self.jwks_cache or default_jwks_cache
+
     def fetch_jwk_set(self, force=False):
         metadata = self.load_server_metadata()
         jwk_set = metadata.get("jwks")
@@ -21,12 +36,68 @@ class OpenIDMixin:
         if not uri:
             raise RuntimeError('Missing "jwks_uri" in metadata')
 
-        with self._get_session() as session:
-            resp = session.request("GET", uri, withhold_token=True)
-            resp.raise_for_status()
-            jwk_set = resp.json()
+        cache = self._get_jwks_cache()
+        cache_key = (metadata.get("issuer"), uri)
 
-        self.server_metadata["jwks"] = jwk_set
+        if not force:
+            cached = cache.get_fresh(cache_key)
+            if cached is not None:
+                return cached
+
+        decided_at = cache.now()
+        with cache.sync_lock(cache_key):
+            entry = cache.get_entry(cache_key)
+            if entry is not None:
+                if not force and cache.is_fresh(entry):
+                    return entry.key_set
+                if force and entry.fetched_at >= decided_at:
+                    # another caller already refreshed within this window
+                    return entry.key_set
+            try:
+                jwk_set, etag = self._request_jwk_set(uri, cache.etag_for(cache_key))
+            except Exception:
+                stale = cache.get_stale(cache_key)
+                if stale is not None:
+                    log.debug(
+                        "JWKS refresh failed for issuer %r; serving cached keys",
+                        cache_key[0],
+                    )
+                    return stale
+                raise
+            if jwk_set is None:  # 304 Not Modified
+                cache.touch(cache_key, etag)
+                return cache.get_entry(cache_key).key_set
+            return cache.store(cache_key, jwk_set, etag)
+
+    def _request_jwk_set(self, uri, etag=None):
+        headers = {}
+        if etag:
+            headers["If-None-Match"] = etag
+        with self._get_session() as session:
+            resp = session.request("GET", uri, withhold_token=True, headers=headers)
+            if resp.status_code == 304:
+                return None, resp.headers.get("ETag")
+            resp.raise_for_status()
+            return resp.json(), resp.headers.get("ETag")
+
+    def _refresh_jwk_set_for_token(self, id_token, metadata):
+        """Fetch a fresh key set for an unknown kid, or return None.
+
+        Returns None when a refresh is suppressed because the kid
+        stayed unknown after a recent refresh. Raises RuntimeError
+        via fetch_jwk_set when no "jwks_uri" is available.
+        """
+        cache = self._get_jwks_cache()
+        cache_key = (metadata.get("issuer"), metadata.get("jwks_uri"))
+        kid = extract_token_kid(id_token)
+        if kid and cache.is_known_miss(cache_key, kid):
+            log.debug(
+                "JWKS refresh suppressed for unknown kid; issuer %r", cache_key[0]
+            )
+            return None
+        jwk_set = self.fetch_jwk_set(force=True)
+        if kid and not key_set_has_kid(jwk_set, kid):
+            cache.record_miss(cache_key, kid)
         return jwk_set
 
     def userinfo(self, **kwargs):
@@ -70,7 +141,10 @@ class OpenIDMixin:
                 registry=JWSRegistry(algorithms=alg_values, strict_check_header=False),
             )
         except InvalidKeyIdError:
-            key_set = KeySet.import_key_set(self.fetch_jwk_set(force=True))
+            jwk_set = self._refresh_jwk_set_for_token(token["id_token"], metadata)
+            if jwk_set is None:
+                raise
+            key_set = KeySet.import_key_set(jwk_set)
             token = jwt.decode(
                 token["id_token"],
                 key=key_set,
