@@ -91,6 +91,7 @@ class OAuth2Request(OAuth2Payload):
         self.refresh_token = None
         self.credential = None
         self._scope = None
+        self._resources = None
 
     @property
     def args(self):
@@ -159,6 +160,20 @@ class OAuth2Request(OAuth2Payload):
     @scope.setter
     def scope(self, value: str):
         self._scope = value
+
+    @property
+    def resources(self):
+        """Resource indicators resolved by the grants for the current request.
+
+        This is distinct from the raw, possibly repeated ``resource`` request
+        parameters, which can be read with
+        :func:`authlib.oauth2.rfc8707.get_resource_indicators`.
+        """
+        return self._resources
+
+    @resources.setter
+    def resources(self, value):
+        self._resources = list(value) if value is not None else None
 
     @property
     def state(self):

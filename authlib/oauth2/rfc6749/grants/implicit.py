@@ -7,6 +7,7 @@ from ..errors import InvalidScopeError
 from ..errors import OAuth2Error
 from ..errors import UnauthorizedClientError
 from ..hooks import hooked
+from .authorization_code import validate_authorization_resources
 from .base import AuthorizationEndpointMixin
 from .base import BaseGrant
 
@@ -145,6 +146,7 @@ class ImplicitGrant(BaseGrant, AuthorizationEndpointMixin):
             if scope is None:
                 raise InvalidScopeError()
             self.request.scope = scope
+            validate_authorization_resources(self)
         except OAuth2Error as error:
             error.redirect_uri = redirect_uri
             error.redirect_fragment = True
@@ -215,10 +217,12 @@ class ImplicitGrant(BaseGrant, AuthorizationEndpointMixin):
                 user=grant_user,
                 scope=self.request.scope,
                 include_refresh_token=False,
+                resources=self.request.resources,
             )
             log.debug("Grant token %r to %r", token, self.request.client)
 
             self.save_token(token)
+            token.pop("resources", None)
             params = [(k, token[k]) for k in token]
             if state:
                 params.append(("state", state))

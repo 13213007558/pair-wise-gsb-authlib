@@ -165,6 +165,19 @@ class AuthorizationCodeMixin:
         """
         raise NotImplementedError()
 
+    def get_resources(self):
+        """Return the resource indicators consented at the authorization
+        endpoint (RFC 8707). The authorization code keeps the whole agreed set
+        so that later token exchanges can only select a subset of it. For
+        instance, the column is called ``resources`` and stores a JSON list::
+
+            def get_resources(self):
+                return self.resources or []
+
+        :return: list of resource indicator strings
+        """
+        return []
+
 
 class TokenMixin:
     def check_client(self, client):
@@ -188,6 +201,19 @@ class TokenMixin:
         :return: scope string
         """
         raise NotImplementedError()
+
+    def get_resources(self):
+        """Return the resource indicators the access token is bound to
+        (RFC 8707 ``aud`` for JWT access tokens). Refresh requests can only
+        narrow this set. For instance, the column is called ``resources`` and
+        stores a JSON list::
+
+            def get_resources(self):
+                return self.resources or []
+
+        :return: list of resource indicator strings
+        """
+        return []
 
     def get_expires_in(self):
         """A method to get the ``expires_in`` value of the token. e.g.

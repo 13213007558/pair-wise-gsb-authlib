@@ -1,0 +1,112 @@
+.. _specs/rfc8707:
+
+RFC8707: Resource Indicators for OAuth 2.0
+==========================================
+
+This section contains the generic implementation of :rfc:`RFC8707 <8707>`.
+
+RFC 8707 lets a client identify one or several resource servers (APIs) it
+wants a token for, using the repeated ``resource`` request parameter::
+
+    GET /oauth/authorize?response_type=code&client_id=...
+        &resource=https://billing.example.net
+        &resource=https://reports.example.com
+
+The same OAuth client can therefore access both ``billing`` and ``reports``,
+but a token issued for one API cannot be replayed against the other: the
+issued JWT access token carries the target resource(s) in its ``aud`` claim,
+and resource servers verify that their own identifier is present in it.
+
+The authorization code keeps the whole set of resources the resource owner
+consented to. At the token endpoint, the client may request a subset of them
+(repeated ``resource`` parameter again). On refresh, the resource indicators
+can only be narrowed compared to the credential being refreshed.
+
+Resource policy
+---------------
+
+The authorization server does not guess which resources are acceptable:
+register a :class:`~authlib.oauth2.rfc8707.ResourcePolicy` to decide, per
+client, which resource indicators can be authorized, and what the default
+target is when the client omits ``resource``::
+
+    from authlib.oauth2.rfc8707 import InvalidTargetError
+    from authlib.oauth2.rfc8707 import ResourcePolicy
+
+    BILLING = "https://billing.example.net"
+    REPORTS = "https://reports.example.com"
+
+    class MyResourcePolicy(ResourcePolicy):
+        def get_allowed_resources(self, client, resources, request):
+            allowed = {BILLING, REPORTS}
+            for resource in resources:
+                if resource not in allowed:
+                    raise InvalidTargetError()
+            return resources
+
+        def get_default_resources(self, client, request,
+                                  authorized_resources=None):
+            # explicit default; MUST NOT silently become all resources
+            return [BILLING] if BILLING in (authorized_resources or []) else []
+
+    authorization_server.register_resource_policy(MyResourcePolicy())
+
+Without a policy, a request carrying a ``resource`` parameter is rejected
+with ``invalid_target``, and a request without one produces a token that is
+not bound to any resource. The default choice is always explicit: it never
+becomes "all authorized resources".
+
+Persisting resources
+--------------------
+
+Save the consented resource set with the authorization code and the final
+resource set with the token. The framework model interfaces expose
+``get_resources()``; the SQLAlchemy integration provides a JSON ``resources``
+column on both mixins::
+
+    def save_authorization_code(self, code, request):
+        item = AuthorizationCode(
+            code=code,
+            client_id=request.client.client_id,
+            scope=request.scope,
+            resources=request.resources,
+            user_id=request.user.id,
+        )
+        item.save()
+
+Opaque tokens keep the same information through the token model interface; no
+new built-in database is required.
+
+Protecting resources
+--------------------
+
+:class:`~authlib.oauth2.rfc9068.JWTBearerTokenValidator` already verifies that
+its ``resource_server`` identifier appears in the JWT ``aud`` claim, in
+addition to the signature and scopes. A token with a valid signature and
+scopes but a non-matching audience is rejected with ``invalid_token``.
+
+For opaque tokens, pass the current API identifier to
+:class:`~authlib.oauth2.rfc6750.BearerTokenValidator`; it then checks the
+token model's ``get_resources()``::
+
+    class MyOpaqueTokenValidator(BearerTokenValidator):
+        def __init__(self):
+            super().__init__(resource_server="https://billing.example.net")
+
+        def authenticate_token(self, token_string):
+            return Token.query.filter_by(access_token=token_string).first()
+
+.. _RFC8707: https://www.rfc-editor.org/rfc/rfc8707.html
+
+API Reference
+-------------
+
+.. module:: authlib.oauth2.rfc8707
+
+.. autoclass:: ResourcePolicy
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InvalidTargetError
+    :member-order: bysource
+    :members:

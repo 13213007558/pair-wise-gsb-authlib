@@ -15,6 +15,10 @@ from ..errors import InvalidScopeError
 from ..errors import UnauthorizedClientError
 from ..hooks import hooked
 from ..util import scope_to_list
+from ...rfc8707 import InvalidTargetError
+from ...rfc8707 import get_resource_indicators
+from ...rfc8707 import unique_resource_indicators
+from ...rfc8707 import validate_resource_indicators
 from .base import BaseGrant
 from .base import TokenEndpointMixin
 
@@ -70,6 +74,27 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
         if not original_scope.issuperset(set(scope_to_list(scope))):
             raise InvalidScopeError()
 
+    def _validate_token_resources(self, client, token):
+        """Per RFC 8707 Section 3, the resource indicators of a refresh
+        request must be a subset of the indicators bound to the credential. If
+        the client omits ``resource``, the new token keeps the resources of
+        the original token (the refresh flow may only narrow, never widen).
+        """
+        requested = get_resource_indicators(self.request.payload)
+        validate_resource_indicators(requested)
+        original_resources = list(token.get_resources() or [])
+        if requested:
+            requested = unique_resource_indicators(requested)
+            if set(requested) - set(original_resources):
+                raise InvalidTargetError(
+                    "The requested resource is not bound to the refresh token."
+                )
+            resources = requested
+        else:
+            resources = original_resources
+        self.request.resources = resources
+        return resources
+
     def validate_token_request(self):
         """If the authorization server issued a refresh token to the client, the
         client makes a refresh request to the token endpoint by adding the
@@ -108,6 +133,7 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
         self.request.client = client
         refresh_token = self._validate_request_token(client)
         self._validate_token_scope(refresh_token)
+        self._validate_token_resources(client, refresh_token)
         self.request.refresh_token = refresh_token
 
     @hooked
@@ -128,6 +154,7 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
 
         self.request.user = user
         self.save_token(token)
+        token.pop("resources", None)
         self.revoke_old_credential(refresh_token)
         return 200, token, self.TOKEN_RESPONSE_HEADER
 
@@ -139,6 +166,7 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
         token = self.generate_token(
             user=user,
             scope=scope,
+            resources=self.request.resources,
             include_refresh_token=self.INCLUDE_NEW_REFRESH_TOKEN,
         )
         return token

@@ -79,6 +79,7 @@ class BearerTokenGenerator:
         scope=None,
         expires_in=None,
         include_refresh_token=True,
+        resources=None,
     ):
         """Generate a bearer token for OAuth 2.0 authorization token endpoint.
 
@@ -91,8 +92,13 @@ class BearerTokenGenerator:
         :return: Token dict
         """
         scope = self.get_allowed_scope(client, scope)
-        access_token = self.access_token_generator(
-            client=client, grant_type=grant_type, user=user, scope=scope
+        access_token = self._call_generator(
+            self.access_token_generator,
+            client=client,
+            grant_type=grant_type,
+            user=user,
+            scope=scope,
+            resources=resources,
         )
         if expires_in is None:
             expires_in = self._get_expires_in(client, grant_type)
@@ -104,12 +110,41 @@ class BearerTokenGenerator:
         if expires_in:
             token["expires_in"] = expires_in
         if include_refresh_token and self.refresh_token_generator:
-            token["refresh_token"] = self.refresh_token_generator(
-                client=client, grant_type=grant_type, user=user, scope=scope
+            token["refresh_token"] = self._call_generator(
+                self.refresh_token_generator,
+                client=client,
+                grant_type=grant_type,
+                user=user,
+                scope=scope,
+                resources=resources,
             )
         if scope:
             token["scope"] = scope
+        # RFC 8707 resource indicators are stored alongside opaque tokens via
+        # the token model interface (e.g. a JSON column). Grants remove this
+        # internal field from the token endpoint response after saving.
+        if resources is not None:
+            token["resources"] = list(resources)
         return token
+
+    @staticmethod
+    def _call_generator(generator, **kwargs):
+        """Call a token-string generator, forwarding ``resources`` only when
+        the custom generator accepts it."""
+        import inspect
+
+        try:
+            parameters = inspect.signature(generator).parameters
+        except (TypeError, ValueError):
+            parameters = None
+        if parameters is not None:
+            accepts = "resources" in parameters or any(
+                param.kind == inspect.Parameter.VAR_KEYWORD
+                for param in parameters.values()
+            )
+            if not accepts:
+                kwargs.pop("resources", None)
+        return generator(**kwargs)
 
     def __call__(
         self,
@@ -119,7 +154,14 @@ class BearerTokenGenerator:
         scope=None,
         expires_in=None,
         include_refresh_token=True,
+        resources=None,
     ):
         return self.generate(
-            grant_type, client, user, scope, expires_in, include_refresh_token
+            grant_type,
+            client,
+            user,
+            scope,
+            expires_in,
+            include_refresh_token,
+            resources,
         )

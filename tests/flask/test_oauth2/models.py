@@ -108,6 +108,7 @@ def save_authorization_code(code, request):
         user_id=request.user.id,
         code_challenge=request.payload.data.get("code_challenge"),
         code_challenge_method=request.payload.data.get("code_challenge_method"),
+        resources=request.resources,
         acr="urn:mace:incommon:iap:silver",
         amr="pwd otp",
     )

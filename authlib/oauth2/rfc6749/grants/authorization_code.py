@@ -11,6 +11,10 @@ from ..errors import InvalidScopeError
 from ..errors import OAuth2Error
 from ..errors import UnauthorizedClientError
 from ..hooks import hooked
+from ...rfc8707 import InvalidTargetError
+from ...rfc8707 import get_resource_indicators
+from ...rfc8707 import unique_resource_indicators
+from ...rfc8707 import validate_resource_indicators
 from .base import AuthorizationEndpointMixin
 from .base import BaseGrant
 from .base import TokenEndpointMixin
@@ -111,6 +115,9 @@ class AuthorizationCodeGrant(BaseGrant, AuthorizationEndpointMixin, TokenEndpoin
         .. _`Section 4.1.1`: https://tools.ietf.org/html/rfc6749#section-4.1.1
         """
         return validate_code_authorization_request(self)
+
+    def validate_authorization_resources(self):
+        return validate_authorization_resources(self)
 
     def create_authorization_response(self, redirect_uri: str, grant_user):
         """If the resource owner grants the access request, the authorization
@@ -237,9 +244,40 @@ class AuthorizationCodeGrant(BaseGrant, AuthorizationEndpointMixin, TokenEndpoin
         if original_redirect_uri and redirect_uri != original_redirect_uri:
             raise InvalidGrantError("Invalid 'redirect_uri' in request.")
 
+        self._validate_token_resources(client, authorization_code)
+
         # save for create_token_response
         self.request.client = client
         self.request.authorization_code = authorization_code
+
+    def _validate_token_resources(self, client, authorization_code):
+        """Per RFC 8707 Section 2.2, resource indicators presented at the
+        token endpoint must target a subset of the resources consented at the
+        authorization endpoint. Without a ``resource`` parameter, the
+        application policy decides the default selection; it must never widen
+        silently to every authorized resource.
+        """
+        requested = get_resource_indicators(self.request.payload)
+        validate_resource_indicators(requested)
+        authorized = list(authorization_code.get_resources() or [])
+        if requested:
+            requested = unique_resource_indicators(requested)
+            if set(requested) - set(authorized):
+                raise InvalidTargetError(
+                    "The requested resource was not authorized for this code."
+                )
+            resources = requested
+        else:
+            resources = self.server.get_default_resources(
+                client, self.request, authorized
+            ) or []
+            resources = unique_resource_indicators(resources)
+            if set(resources) - set(authorized):
+                raise InvalidTargetError(
+                    "The default resources exceed the resources of this code."
+                )
+        self.request.resources = resources
+        return resources
 
     @hooked
     def create_token_response(self):
@@ -282,11 +320,13 @@ class AuthorizationCodeGrant(BaseGrant, AuthorizationEndpointMixin, TokenEndpoin
         token = self.generate_token(
             user=user,
             scope=scope,
+            resources=self.request.resources,
             include_refresh_token=client.check_grant_type("refresh_token"),
         )
         log.debug("Issue token %r to %r", token, client)
 
         self.save_token(token)
+        token.pop("resources", None)
         self.delete_authorization_code(authorization_code)
         return 200, token, self.TOKEN_RESPONSE_HEADER
 
@@ -310,6 +350,7 @@ class AuthorizationCodeGrant(BaseGrant, AuthorizationEndpointMixin, TokenEndpoin
                     client_id=client.client_id,
                     redirect_uri=request.payload.redirect_uri,
                     scope=request.scope,
+                    resources=request.resources,
                     user_id=request.user.id,
                 )
                 item.save()
@@ -318,6 +359,10 @@ class AuthorizationCodeGrant(BaseGrant, AuthorizationEndpointMixin, TokenEndpoin
             the resolved scope. Per RFC 6749 Section 3.3, if the client omits the
             scope parameter, the server uses a default value from
             ``client.get_allowed_scope()``.
+
+        .. note:: Use ``request.resources`` to persist the resource indicators
+            consented at the authorization endpoint (RFC 8707). Later token
+            exchanges can only target a subset of this set.
         """
         raise NotImplementedError()
 
@@ -391,6 +436,7 @@ def validate_code_authorization_request(grant):
         if scope is None:
             raise InvalidScopeError()
         request.scope = scope
+        validate_authorization_resources(grant)
 
     try:
         validate_authorization_request_payload(grant, redirect_uri)
@@ -398,3 +444,28 @@ def validate_code_authorization_request(grant):
         error.redirect_uri = redirect_uri
         raise error
     return redirect_uri
+
+
+def validate_authorization_resources(grant):
+    """Read and validate the (possibly repeated) ``resource`` parameters of
+    the authorization request (RFC 8707 Section 2.1), ask the configured
+    resource policy which of them can be consented, and store the agreed
+    resource set on ``request.resources`` so that it is saved together with
+    the authorization code.
+    """
+    request = grant.request
+    resources = get_resource_indicators(request.payload)
+    validate_resource_indicators(resources)
+    allowed = grant.server.get_allowed_resources(
+        request.client, resources, request
+    ) or []
+    # The policy may return the values in any order and as any iterable;
+    # normalize and make sure it cannot authorize resources that were not
+    # requested and validated.
+    allowed = unique_resource_indicators(allowed)
+    if resources and set(allowed) - set(resources):
+        raise InvalidTargetError(
+            "The resource policy authorized a resource that was not requested."
+        )
+    request.resources = allowed
+    return allowed

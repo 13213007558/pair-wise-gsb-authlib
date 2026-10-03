@@ -100,9 +100,17 @@ def prepare_token_request(grant_type, body="", redirect_uri=None, **kwargs):
     if grant_type == "authorization_code" and kwargs.get("code") is None:
         raise MissingCodeException()
 
-    for k in kwargs:
-        if kwargs[k]:
-            params.append((to_unicode(k), kwargs[k]))
+    for k, value in kwargs.items():
+        if value is None:
+            continue
+        # Repeated parameters, such as RFC 8707 ``resource`` indicators, are
+        # sent once per value rather than collapsed by a single-valued dict.
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                if item is not None:
+                    params.append((to_unicode(k), item))
+        elif value:
+            params.append((to_unicode(k), value))
 
     return add_params_to_qs(body, params)
 

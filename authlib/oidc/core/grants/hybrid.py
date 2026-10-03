@@ -75,12 +75,14 @@ class OpenIDHybridGrant(OpenIDImplicitGrant):
             user=grant_user,
             scope=self.request.payload.scope,
             include_refresh_token=False,
+            resources=self.request.resources,
         )
 
         response_types = self.request.payload.response_type.split()
         if "token" in response_types:
             log.debug("Grant token %r to %r", token, client)
             self.server.save_token(token, self.request)
+            token.pop("resources", None)
             if "id_token" in response_types:
                 token = self.process_implicit_token(token, code)
         else:

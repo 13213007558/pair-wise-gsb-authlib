@@ -1,3 +1,5 @@
+import inspect
+
 from authlib.common.errors import ContinueIteration
 from authlib.deprecate import deprecate
 
@@ -14,6 +16,8 @@ from .requests import JsonRequest
 from .requests import OAuth2Request
 from .util import scope_to_list
 
+from ..rfc8707 import InvalidTargetError
+
 
 class AuthorizationServer(Hookable):
     """Authorization server that handles Authorization Endpoint and Token
@@ -27,6 +31,7 @@ class AuthorizationServer(Hookable):
         self.scopes_supported = scopes_supported
         self._token_generators = {}
         self._client_auth = None
+        self._resource_policy = None
         self._authorization_grants = []
         self._token_grants = []
         self._endpoints = {}
@@ -51,6 +56,7 @@ class AuthorizationServer(Hookable):
         scope=None,
         expires_in=None,
         include_refresh_token=True,
+        resources=None,
     ):
         """Generate the token dict.
 
@@ -70,7 +76,7 @@ class AuthorizationServer(Hookable):
         if not func:
             raise RuntimeError("No configured token generator")
 
-        return func(
+        kwargs = dict(
             grant_type=grant_type,
             client=client,
             user=user,
@@ -78,6 +84,12 @@ class AuthorizationServer(Hookable):
             expires_in=expires_in,
             include_refresh_token=include_refresh_token,
         )
+        # Only forward the RFC 8707 resources to generators which know about
+        # them, to keep custom token generators written against older Authlib
+        # signatures working.
+        if resources is not None and _accepts_keyword(func, "resources"):
+            kwargs["resources"] = resources
+        return func(**kwargs)
 
     def register_token_generator(self, grant_type, func):
         """Register a function as token generator for the given ``grant_type``.
@@ -155,6 +167,44 @@ class AuthorizationServer(Hookable):
 
     def register_extension(self, extension):
         self._extensions.append(extension(self))
+
+    def register_resource_policy(self, policy):
+        """Register the strategy which decides which RFC 8707 resource
+        indicators can be authorized for a client, and how requests without an
+        explicit ``resource`` parameter are resolved.
+
+        Without a policy, any ``resource`` parameter is rejected with
+        ``invalid_target``, and requests without ``resource`` resolve to no
+        resource at all (never to "all resources").
+        """
+        self._resource_policy = policy
+
+    def get_allowed_resources(self, client, resources, request):
+        """Resolve which of the requested ``resource`` indicators can be
+        authorized. Override this method or register a
+        :class:`~authlib.oauth2.rfc8707.ResourcePolicy` to customize the
+        authorization logic.
+        """
+        if self._resource_policy is not None:
+            return self._resource_policy.get_allowed_resources(
+                client, resources, request
+            )
+        if resources:
+            raise InvalidTargetError(
+                "No resource policy is configured to authorize resource indicators."
+            )
+        return []
+
+    def get_default_resources(self, client, request, authorized_resources=None):
+        """Resolve the target resources of a token when the request does not
+        carry a ``resource`` parameter. This never defaults to all authorized
+        resources: the application policy must make the decision explicitly.
+        """
+        if self._resource_policy is not None:
+            return self._resource_policy.get_default_resources(
+                client, request, authorized_resources
+            )
+        return []
 
     def get_error_uri(self, request, error):
         """Return a URI for the given error, framework may implement this method."""
@@ -417,3 +467,20 @@ def _create_grant(grant_cls, extensions, request, server):
         for ext in extensions:
             ext(grant)
     return grant
+
+
+def _accepts_keyword(func, name):
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return False
+    parameter = signature.parameters.get(name)
+    if parameter is None:
+        return any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in signature.parameters.values()
+        )
+    return parameter.kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )

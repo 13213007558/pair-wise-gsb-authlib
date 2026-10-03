@@ -37,6 +37,7 @@ class BaseGrant(Hookable):
         grant_type=None,
         expires_in=None,
         include_refresh_token=True,
+        resources=None,
     ):
         if grant_type is None:
             grant_type = self.GRANT_TYPE
@@ -47,6 +48,7 @@ class BaseGrant(Hookable):
             scope=scope,
             expires_in=expires_in,
             include_refresh_token=include_refresh_token,
+            resources=resources,
         )
 
     def authenticate_token_endpoint_client(self):
