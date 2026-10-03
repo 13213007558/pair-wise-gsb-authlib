@@ -60,16 +60,24 @@ class Client(db.Model, OAuth2ClientMixin):
 class AuthorizationCode(db.Model, OAuth2AuthorizationCodeMixin):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, nullable=False)
+    resources = db.Column(db.Text, default="")
 
     @property
     def user(self):
         return db.session.get(User, self.user_id)
+
+    def get_resources(self):
+        return self.resources.split() if self.resources else None
 
 
 class Token(db.Model, OAuth2TokenMixin):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id", ondelete="CASCADE"))
     user = db.relationship("User")
+    resources = db.Column(db.Text, default="")
+
+    def get_resources(self):
+        return self.resources.split() if self.resources else None
 
     def is_refresh_token_active(self):
         return not self.refresh_token_revoked_at
@@ -104,6 +112,7 @@ def save_authorization_code(code, request):
         client_id=client.client_id,
         redirect_uri=request.payload.redirect_uri,
         scope=request.scope,
+        resources=" ".join(request.resources or []),
         nonce=request.payload.data.get("nonce"),
         user_id=request.user.id,
         code_challenge=request.payload.data.get("code_challenge"),

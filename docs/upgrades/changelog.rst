@@ -15,6 +15,13 @@ Version 1.x.x
   a draft extension to :rfc:`7523` for cross-application access using identity
   assertions issued by an external enterprise IdP.
   See :ref:`specs/rfc7523-id-jag` for details. :pr:`898`
+- Add support for Resource Indicators for OAuth 2.0 (:rfc:`8707`) in the
+  authorization code and refresh token flows. Clients can repeat the
+  ``resource`` parameter in authorization, token and refresh requests,
+  application policy hooks decide which resources can be authorized and
+  what the default selection is, and issued JWT access tokens carry the
+  final resources in their ``aud`` claim. See :ref:`specs/rfc8707` for
+  details.
 
 Version 1.8.0
 -------------

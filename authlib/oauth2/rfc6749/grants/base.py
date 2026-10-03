@@ -1,5 +1,6 @@
 from authlib.consts import default_json_headers
 
+from ...rfc8707 import parse_resource_indicators
 from ..errors import InvalidRequestError
 from ..hooks import Hookable
 from ..hooks import hooked
@@ -37,6 +38,7 @@ class BaseGrant(Hookable):
         grant_type=None,
         expires_in=None,
         include_refresh_token=True,
+        resources=None,
     ):
         if grant_type is None:
             grant_type = self.GRANT_TYPE
@@ -47,6 +49,7 @@ class BaseGrant(Hookable):
             scope=scope,
             expires_in=expires_in,
             include_refresh_token=include_refresh_token,
+            resources=resources,
         )
 
     def authenticate_token_endpoint_client(self):
@@ -83,6 +86,29 @@ class BaseGrant(Hookable):
         """Validate if requested scope is supported by Authorization Server."""
         scope = self.request.payload.scope
         return self.server.validate_requested_scope(scope)
+
+    def validate_requested_resources(self):
+        """Resolve the RFC 8707 resource indicators for the current request.
+
+        Every ``resource`` parameter value is extracted (the parameter MAY
+        be repeated) and validated: malformed values raise
+        :class:`~authlib.oauth2.rfc8707.InvalidTargetError`, and the
+        application policy hook
+        :meth:`AuthorizationServer.validate_requested_resources` decides
+        which resources may be authorized. When the request contains no
+        ``resource`` parameter, the explicit policy hook
+        :meth:`AuthorizationServer.get_default_resources` provides the
+        default selection.
+
+        :return: list of resource indicator strings, or None
+        :raise InvalidTargetError: if a requested resource is invalid
+            or not allowed.
+        """
+        resources = parse_resource_indicators(self.request.payload.datalist)
+        if resources:
+            self.server.validate_requested_resources(resources, self.client)
+            return resources
+        return self.server.get_default_resources(self.client)
 
 
 class TokenEndpointMixin:

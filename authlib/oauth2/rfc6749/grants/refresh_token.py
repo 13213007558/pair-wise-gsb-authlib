@@ -9,6 +9,8 @@ Access Token per `Section 6`_.
 
 import logging
 
+from ...rfc8707 import InvalidTargetError
+from ...rfc8707 import parse_resource_indicators
 from ..errors import InvalidGrantError
 from ..errors import InvalidRequestError
 from ..errors import InvalidScopeError
@@ -70,6 +72,23 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
         if not original_scope.issuperset(set(scope_to_list(scope))):
             raise InvalidScopeError()
 
+    def _validate_token_resources(self, token):
+        # RFC 8707: the requested resources MUST NOT exceed the resources
+        # granted in the original authorization; refreshing can only
+        # narrow the set of resources down.
+        resources = parse_resource_indicators(self.request.payload.datalist)
+        granted = token.get_resources()
+        if not resources:
+            return granted
+
+        self.server.validate_requested_resources(resources, self.request.client)
+        if granted is not None and not set(resources).issubset(set(granted)):
+            raise InvalidTargetError(
+                "The requested resource exceeds the resources granted by "
+                "the refresh token."
+            )
+        return resources
+
     def validate_token_request(self):
         """If the authorization server issued a refresh token to the client, the
         client makes a refresh request to the token endpoint by adding the
@@ -109,6 +128,7 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
         refresh_token = self._validate_request_token(client)
         self._validate_token_scope(refresh_token)
         self.request.refresh_token = refresh_token
+        self.request.resources = self._validate_token_resources(refresh_token)
 
     @hooked
     def create_token_response(self):
@@ -140,6 +160,7 @@ class RefreshTokenGrant(BaseGrant, TokenEndpointMixin):
             user=user,
             scope=scope,
             include_refresh_token=self.INCLUDE_NEW_REFRESH_TOKEN,
+            resources=self.request.resources,
         )
         return token
 

@@ -1,0 +1,142 @@
+.. _specs/rfc8707:
+
+RFC8707: Resource Indicators for OAuth 2.0
+==========================================
+
+This section contains the implementation of RFC8707_, Resource Indicators
+for OAuth 2.0. It allows a client to signal which protected resource (API)
+it wants a token for, by sending one or more ``resource`` parameters in
+authorization, token and refresh requests. The authorization server binds
+the issued token to the resulting set of resources, so that a token issued
+for one API can not be replayed against another API.
+
+Authlib implements RFC 8707 for the authorization code and refresh token
+flows:
+
+- the ``resource`` parameter MAY be repeated in requests; every value is
+  read from the multi-value request payload and validated as an absolute
+  URI without fragment component
+- the application decides with explicit policy hooks which resources can
+  be authorized, and which resources are selected when a request carries
+  no ``resource`` parameter
+- the authorization code records the consented set of resources; the token
+  request MAY select a subset of it
+- refreshing a token can only narrow the original set of resources down
+- JWT access tokens carry the final resources in their ``aud`` claim, and
+  opaque tokens can persist them through the token model interface
+- protocol errors are returned as ``invalid_target``
+
+Policy hooks
+------------
+
+The authorization server exposes two policy hooks. Without them, Authlib
+never defaults to "all resources": a request without ``resource``
+parameter results in a token without resource audience::
+
+    from authlib.oauth2.rfc8707 import InvalidTargetError
+
+    ALLOWED_RESOURCES = {
+        "https://billing.example.com",
+        "https://reports.example.com",
+    }
+
+    class MyAuthorizationServer(AuthorizationServer):
+        def validate_requested_resources(self, resources, client):
+            if not set(resources).issubset(ALLOWED_RESOURCES):
+                raise InvalidTargetError()
+
+        def get_default_resources(self, client):
+            # explicit default when the request has no 'resource' parameter
+            return ["https://billing.example.com"]
+
+Persisting resources
+--------------------
+
+The consented resources are available as ``request.resources`` when the
+authorization code and the tokens are saved. The model mixins provide a
+``get_resources()`` method so the grants can read them back; no built-in
+database column is required, store them the way you want::
+
+    class AuthorizationCode(db.Model, OAuth2AuthorizationCodeMixin):
+        resources = db.Column(db.Text, default="")
+
+        def get_resources(self):
+            return self.resources.split() if self.resources else None
+
+    class Token(db.Model, OAuth2TokenMixin):
+        resources = db.Column(db.Text, default="")
+
+        def get_resources(self):
+            return self.resources.split() if self.resources else None
+
+    def save_authorization_code(code, request):
+        item = AuthorizationCode(
+            code=code,
+            client_id=request.client.client_id,
+            resources=" ".join(request.resources or []),
+            ...
+        )
+        ...
+
+    def save_token(token, request):
+        item = Token(
+            client_id=request.client.client_id,
+            resources=" ".join(request.resources or []),
+            **token,
+        )
+        ...
+
+JWT access tokens
+-----------------
+
+When the :class:`~authlib.oauth2.rfc9068.JWTBearerTokenGenerator` is used,
+the ``aud`` claim of the issued JWT access token matches the final set of
+resources. Resource servers validate the audience with the existing
+``resource_server`` parameter of
+:class:`~authlib.oauth2.rfc9068.JWTBearerTokenValidator`.
+
+Opaque access tokens
+--------------------
+
+For opaque tokens, :class:`~authlib.oauth2.rfc6750.BearerTokenValidator`
+accepts an optional ``resource_server`` parameter. When set, the token
+resources (read with ``token.get_resources()``) MUST contain the resource
+server identifier, otherwise the token is rejected, even if its signature
+and scope are valid::
+
+    billing_api = ResourceProtector()
+    billing_api.register_token_validator(
+        MyBearerTokenValidator(resource_server="https://billing.example.com")
+    )
+
+    reports_api = ResourceProtector()
+    reports_api.register_token_validator(
+        MyBearerTokenValidator(resource_server="https://reports.example.com")
+    )
+
+Flask example with two resources
+--------------------------------
+
+A complete example of one OAuth client accessing a billing API and a
+reports API is available in ``tests/flask/test_oauth2/test_rfc8707.py``. It
+covers the whole matrix: authorization with repeated ``resource``
+parameters, token exchange with a subset of resources, refresh narrowing,
+and access to both APIs with JWT and opaque tokens.
+
+.. _RFC8707: https://www.rfc-editor.org/rfc/rfc8707.html
+
+API Reference
+-------------
+
+.. module:: authlib.oauth2.rfc8707
+
+.. autoclass:: InvalidTargetError
+
+.. autofunction:: validate_resource_indicator
+
+.. autofunction:: parse_resource_indicators
+
+.. autoclass:: authlib.oauth2.rfc6749.AuthorizationServer
+    :members: get_default_resources, validate_requested_resources
+    :noindex:
+

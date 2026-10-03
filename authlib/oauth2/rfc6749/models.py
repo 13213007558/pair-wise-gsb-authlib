@@ -165,6 +165,18 @@ class AuthorizationCodeMixin:
         """
         raise NotImplementedError()
 
+    def get_resources(self):
+        """A method to get the RFC 8707 resource indicators that were
+        consented to when this authorization code was issued. For instance,
+        the resources are saved in a ``resources`` column::
+
+            def get_resources(self):
+                return self.resources.split() if self.resources else None
+
+        :return: list of resource indicator strings, or None
+        """
+        return None
+
 
 class TokenMixin:
     def check_client(self, client):
@@ -231,6 +243,18 @@ class TokenMixin:
                 return User.get(self.user_id)
         """
         raise NotImplementedError()
+
+    def get_resources(self):
+        """A method to get the RFC 8707 resource indicators this token was
+        issued for. For instance, the resources are saved in a ``resources``
+        column::
+
+            def get_resources(self):
+                return self.resources.split() if self.resources else None
+
+        :return: list of resource indicator strings, or None
+        """
+        return None
 
     def get_client(self) -> ClientMixin:
         """A method to get the client object associated with this token:

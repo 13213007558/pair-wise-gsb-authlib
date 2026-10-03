@@ -3,6 +3,8 @@ import logging
 from authlib.common.security import generate_token
 from authlib.common.urls import add_params_to_uri
 
+from ...rfc8707 import InvalidTargetError
+from ...rfc8707 import parse_resource_indicators
 from ..errors import AccessDeniedError
 from ..errors import InvalidClientError
 from ..errors import InvalidGrantError
@@ -241,6 +243,26 @@ class AuthorizationCodeGrant(BaseGrant, AuthorizationEndpointMixin, TokenEndpoin
         self.request.client = client
         self.request.authorization_code = authorization_code
 
+        # RFC 8707: the token request MAY select a subset of the resources
+        # that were consented to in the authorization request.
+        self.request.resources = self._validate_token_resources(authorization_code)
+
+    def _validate_token_resources(self, authorization_code):
+        resources = parse_resource_indicators(self.request.payload.datalist)
+        granted = authorization_code.get_resources()
+        if not resources:
+            # no 'resource' parameter: the token is issued for the whole
+            # set of resources consented to in the authorization request
+            return granted
+
+        self.server.validate_requested_resources(resources, self.request.client)
+        if granted is not None and not set(resources).issubset(set(granted)):
+            raise InvalidTargetError(
+                "The requested resource exceeds the resources granted by "
+                "the authorization code."
+            )
+        return resources
+
     @hooked
     def create_token_response(self):
         """If the access token request is valid and authorized, the
@@ -283,6 +305,7 @@ class AuthorizationCodeGrant(BaseGrant, AuthorizationEndpointMixin, TokenEndpoin
             user=user,
             scope=scope,
             include_refresh_token=client.check_grant_type("refresh_token"),
+            resources=self.request.resources,
         )
         log.debug("Issue token %r to %r", token, client)
 
@@ -391,6 +414,9 @@ def validate_code_authorization_request(grant):
         if scope is None:
             raise InvalidScopeError()
         request.scope = scope
+        # RFC 8707: resolve and validate the requested resources, the
+        # authorization code will record the consented set of resources
+        request.resources = grant.validate_requested_resources()
 
     try:
         validate_authorization_request_payload(grant, redirect_uri)

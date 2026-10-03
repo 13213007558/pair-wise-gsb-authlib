@@ -49,6 +49,17 @@ class OAuth2Payload:
     def state(self):
         return self.data.get("state")
 
+    @property
+    def resources(self) -> list:
+        """All the ``resource`` parameter values defined by RFC 8707. The
+        parameter MAY be repeated in a request, so values are read from the
+        multi-value ``datalist`` mapping instead of the single-value
+        ``data`` dictionary.
+
+        :return: list of strings
+        """
+        return self.datalist.get("resource", [])
+
 
 class BasicOAuth2Payload(OAuth2Payload):
     def __init__(self, payload):
@@ -91,6 +102,7 @@ class OAuth2Request(OAuth2Payload):
         self.refresh_token = None
         self.credential = None
         self._scope = None
+        self._resources = None
 
     @property
     def args(self):
@@ -159,6 +171,18 @@ class OAuth2Request(OAuth2Payload):
     @scope.setter
     def scope(self, value: str):
         self._scope = value
+
+    @property
+    def resources(self) -> list:
+        """The resolved RFC 8707 resource indicators for this request. Grants
+        set this value after validation. The raw requested ``resource``
+        parameter values are available on ``request.payload.resources``.
+        """
+        return self._resources
+
+    @resources.setter
+    def resources(self, value):
+        self._resources = value
 
     @property
     def state(self):

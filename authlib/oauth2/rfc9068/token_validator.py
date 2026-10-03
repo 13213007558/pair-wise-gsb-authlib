@@ -53,8 +53,7 @@ class JWTBearerTokenValidator(BearerTokenValidator):
 
     def __init__(self, issuer, resource_server, *args, **kwargs):
         self.issuer = issuer
-        self.resource_server = resource_server
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, resource_server=resource_server, **kwargs)
 
     def get_jwks(self):
         """Return the JWKs that will be used to check the JWT access token signature.

@@ -51,6 +51,7 @@ class AuthorizationServer(Hookable):
         scope=None,
         expires_in=None,
         include_refresh_token=True,
+        resources=None,
     ):
         """Generate the token dict.
 
@@ -60,6 +61,7 @@ class AuthorizationServer(Hookable):
         :param expires_in: if provided, use this value as expires_in.
         :param scope: current requested scope.
         :param include_refresh_token: should refresh_token be included.
+        :param resources: RFC 8707 resource indicators the token is issued for.
         :return: Token dict
         """
         # generator for a specified grant type
@@ -70,6 +72,19 @@ class AuthorizationServer(Hookable):
         if not func:
             raise RuntimeError("No configured token generator")
 
+        # Only pass ``resources`` to generators when the request carries
+        # RFC 8707 resource indicators, so that custom generators without
+        # a ``resources`` parameter keep working.
+        if resources is not None:
+            return func(
+                grant_type=grant_type,
+                client=client,
+                user=user,
+                scope=scope,
+                expires_in=expires_in,
+                include_refresh_token=include_refresh_token,
+                resources=resources,
+            )
         return func(
             grant_type=grant_type,
             client=client,
@@ -78,6 +93,44 @@ class AuthorizationServer(Hookable):
             expires_in=expires_in,
             include_refresh_token=include_refresh_token,
         )
+
+    def get_default_resources(self, client):
+        """Return the default RFC 8707 resource indicators to use when a
+        request does not contain any ``resource`` parameter.
+
+        This is an explicit policy hook: the framework never falls back to
+        "all resources" on its own. The default implementation returns
+        ``None``, meaning the issued token is not restricted to any
+        audience. Developers MAY re-implement this method, e.g.::
+
+            def get_default_resources(self, client):
+                return ["https://api.example.com"]
+
+        :param client: the client making the request.
+        :return: list of resource indicator strings, or None
+        """
+        return None
+
+    def validate_requested_resources(self, resources, client):
+        """Validate the requested RFC 8707 resource indicators against the
+        authorization server policy. Developers SHOULD re-implement this
+        method to decide which resources a client is allowed to obtain
+        tokens for, and raise
+        :class:`~authlib.oauth2.rfc8707.InvalidTargetError` when a requested
+        resource is not allowed::
+
+            def validate_requested_resources(self, resources, client):
+                allowed = {"https://api.example.com"}
+                if not set(resources).issubset(allowed):
+                    raise InvalidTargetError()
+
+        The default implementation accepts every syntactically valid
+        resource indicator.
+
+        :param resources: list of requested resource indicator strings.
+        :param client: the client making the request.
+        :raise InvalidTargetError: if a resource is not allowed.
+        """
 
     def register_token_generator(self, grant_type, func):
         """Register a function as token generator for the given ``grant_type``.
