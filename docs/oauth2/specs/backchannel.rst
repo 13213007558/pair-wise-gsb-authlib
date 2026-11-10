@@ -277,6 +277,156 @@ The OP should not send a logout token again, unless the previous request may
 have failed because of a temporary error, such as a network outage. In this
 case, wait before sending it again.
 
+Receiving Logout Notifications
+------------------------------
+
+On the Relying Party side, :class:`BackchannelLogoutReceiver` validates the
+incoming logout tokens and terminates the matching local sessions. Subclass
+it, and plug a :class:`LogoutTokenStore` into it:
+
+.. code-block:: python
+
+    from joserfc.jwk import KeySet
+
+    class SessionStore(LogoutTokenStore):
+        def __init__(self):
+            self.jtis = {}
+            self.sessions = {}
+
+        def record_logout(self, *, jti, sessions, expires_at):
+            # In production, run this as ONE database transaction:
+            # insert the jti (failing if it already exists), delete the
+            # sessions, then commit both together.
+            if jti in self.jtis:
+                return False  # duplicate notification: change nothing
+            self.jtis[jti] = expires_at
+            for session_id in sessions:
+                self.sessions.pop(session_id, None)
+            return True
+
+
+    class MyBackchannelLogoutReceiver(BackchannelLogoutReceiver):
+        def __init__(self):
+            self.store = SessionStore()
+
+        def get_issuer_keys(self, issuer):
+            # The public keys of the OP, fetched from its jwks_uri and
+            # cached. Return None for an issuer this RP does not trust.
+            if issuer == "https://auth.example.com":
+                return public_jwks
+            return None
+
+        def get_client_id(self, issuer):
+            return "my-client-id"
+
+        def get_logout_sessions(self, issuer, client_id, sub, sid):
+            # The lookup is scoped by the issuer AND the client_id: a sid
+            # value may exist at another OP, or for another client.
+            matches = []
+            for session_id, session in self.store.sessions.items():
+                if session["issuer"] != issuer or session["client_id"] != client_id:
+                    continue
+                if sid is not None and session["sid"] != sid:
+                    continue
+                if sub is not None and session["sub"] != sub:
+                    continue
+                matches.append(session_id)
+            return matches
+
+        def get_store(self):
+            return self.store
+
+
+    receiver = MyBackchannelLogoutReceiver()
+
+:func:`validate_logout_token` performs the validation of the specification:
+signature, ``iss``, ``aud``, ``iat``, ``exp``, ``jti``, the ``events`` claim,
+and the ``sub``/``sid`` requirements. A token with a ``nonce`` claim is
+rejected, and so is a token without the back-channel logout event: a plain
+ID token of the same issuer is never accepted as a logout notification.
+
+The endpoint answers ``400 Bad Request`` when the token is invalid, and
+``200 OK`` (or ``204 No Content``) when the logout is committed:
+
+.. code-block:: python
+
+    @app.post("/backchannel-logout")
+    def backchannel_logout():
+        logout_token = request.form.get("logout_token")
+        if not logout_token:
+            return {"error": "invalid_request"}, 400
+        try:
+            receiver.handle_logout_token(logout_token)
+        except InvalidLogoutTokenError:
+            return {"error": "invalid_request"}, 400
+        return "", 204
+
+An exception raised by the store means the logout was not committed. Let it
+result in a ``500`` error: the OP may send the notification again, and the
+retry is safe because the ``jti`` record is idempotent.
+
+.. invisible-code-block: python
+
+    receiver.store.sessions["local-session-1"] = {
+        "issuer": "https://auth.example.com",
+        "client_id": "my-client-id",
+        "sub": "user-123",
+        "sid": "sess-1",
+    }
+    private_jwks = KeySet.import_key_set(json.load(open(jwks_file_path)))
+    logout_token = create_logout_token(
+        issuer="https://auth.example.com",
+        audience="my-client-id",
+        key=private_jwks,
+        sub="user-123",
+        sid="sess-1",
+    )
+
+.. code-block:: python
+
+    client = app.test_client()
+    response = client.post("/backchannel-logout", data={"logout_token": logout_token})
+    assert response.status_code == 204
+    assert "local-session-1" not in receiver.store.sessions
+
+    # a replay of the same token is a success, and changes nothing
+    response = client.post("/backchannel-logout", data={"logout_token": logout_token})
+    assert response.status_code == 204
+
+Session Lookup Scope
+~~~~~~~~~~~~~~~~~~~~
+
+:meth:`~BackchannelLogoutReceiver.get_logout_sessions` receives the ``iss``
+and the ``aud`` of the validated token, with its ``sub`` and ``sid``. The
+lookup must always be scoped by the issuer and the client ID, because a
+``sid`` is only unique within one OP session: the same value may exist at
+another issuer, or for another client of the same issuer.
+
+- With a ``sid``, terminate the sessions of this ``(issuer, client_id,
+  sid)``. If a ``sub`` is also present, the sessions must match it too.
+- With only a ``sub``, terminate all the sessions of this user at this
+  ``(issuer, client_id)``: every session of this user with this OP account,
+  for this client, and nothing else.
+
+Commit Boundary
+~~~~~~~~~~~~~~~
+
+:meth:`~BackchannelLogoutReceiver.handle_logout_token` is read-only until
+the very end: the token validation and the session lookup write nothing.
+The only write is :meth:`LogoutTokenStore.record_logout`, which must commit
+the ``jti`` record and the session invalidations in a single atomic
+operation. The endpoint reports success only after this commit returns:
+
+- the token is valid, but the commit fails → the exception propagates, the
+  endpoint answers with an error, and the OP may retry;
+- the commit succeeds → the sessions are gone and the ``jti`` is recorded,
+  atomically; a success is returned;
+- the same token arrives again → the ``jti`` is already recorded, nothing
+  changes, and a success is returned: duplicates are idempotent.
+
+Keep the ``jti`` records until the ``exp`` of their token. After that, the
+token would be rejected as expired anyway, and the record can be dropped.
+
 Logout Token
 ------------
 
@@ -389,6 +539,22 @@ API Reference
 .. autoclass:: BackchannelLogoutSender
     :member-order: bysource
     :members:
+
+.. autoclass:: BackchannelLogoutReceiver
+    :member-order: bysource
+    :members:
+
+.. autoclass:: LogoutTokenStore
+    :member-order: bysource
+    :members:
+
+.. autoclass:: LogoutResult
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InvalidLogoutTokenError
+
+.. autofunction:: validate_logout_token
 
 .. autofunction:: create_logout_token
 
