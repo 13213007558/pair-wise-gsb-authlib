@@ -1,0 +1,132 @@
+.. _specs/rfc8693:
+
+RFC 8693: OAuth 2.0 Token Exchange
+==================================
+
+.. meta::
+    :description: API references on the RFC 8693 Token Exchange grant of the
+        Python implementation, and how to register it on an authorization
+        server.
+
+This section contains the generic Python implementation of :rfc:`8693`.
+
+.. module:: authlib.oauth2.rfc8693
+
+Token Exchange lets a service call another service on behalf of a user,
+without replaying the access token it received. The client presents a
+``subject_token`` and, optionally, an ``actor_token``; the authorization
+server issues a new, downgraded access token.
+
+The grant is registered like every other token endpoint grant with
+:meth:`~authlib.oauth2.rfc6749.AuthorizationServer.register_grant`.
+
+.. code-block:: python
+
+    from authlib.oauth2.rfc8693 import TokenExchangeGrant
+
+    class MyTokenExchangeGrant(TokenExchangeGrant):
+        def validate_subject_token(self, token, token_type):
+            # introspect or verify the token, then describe it
+            ...
+
+        def validate_actor_token(self, token, token_type):
+            ...
+
+        def authorize_delegation(
+            self, client, subject, actor,
+            requested_scope, requested_resources, requested_audiences,
+        ):
+            # the single authorization point
+            ...
+
+    authorization_server.register_grant(MyTokenExchangeGrant)
+
+Scope of the implementation
+---------------------------
+
+The grant only accepts and issues **access tokens**
+(``urn:ietf:params:oauth:token-type:access_token``). It is not an arbitrary
+token format converter: a request that presents another ``*_token_type`` is
+rejected with ``invalid_request``. Parsing and verifying the concrete token
+format (opaque string, JWT, ...) is the job of the validation interfaces, not
+of the grant.
+
+Validation interfaces
+---------------------
+
+The grant never inspects the input tokens itself. It calls two explicit
+interfaces, which must return a
+:class:`~authlib.oauth2.rfc8693.TokenInfo`:
+
+- :meth:`TokenExchangeGrant.validate_subject_token` validates the
+  ``subject_token`` and identifies the user, its issuer, scope, audience and
+  any existing ``act`` chain. Raise
+  :class:`~authlib.oauth2.rfc6749.errors.InvalidGrantError` to reject an
+  unknown, expired or revoked token.
+- :meth:`TokenExchangeGrant.validate_actor_token` validates the optional
+  ``actor_token`` and identifies the acting party. The actor token
+  authenticates the caller; it can never widen the scope of the exchange.
+
+A principal is the pair ``(issuer, subject)``: the same subject name at
+another issuer is a different principal. :class:`TokenInfo` keeps the issuer
+so the authorization hook can reject a foreign or spoofed identity.
+
+Authorization hook
+------------------
+
+:meth:`TokenExchangeGrant.authorize_delegation` is the single authorization
+point. It receives the authenticated client, the validated subject, the
+optional actor and everything the client requested, and returns a
+:class:`~authlib.oauth2.rfc8693.DelegationDecision`:
+
+- ``allowed=False`` rejects the exchange with ``access_denied``.
+- ``scope`` is the scope of the issued token. It must be a subset of the
+  subject token scope; requesting more is refused with ``invalid_scope``.
+- ``resources`` narrows the target resources. Resources and audiences outside
+  the server allow-lists are refused with the RFC 8693 ``invalid_target``
+  error.
+
+The issued token keeps the **user subject**. The current actor is written to
+the ``act`` claim; the chain already carried by the subject token is nested
+inside it. Historical actors are informational only and never add
+permissions to the current call.
+
+Integration contract
+--------------------
+
+When you register the grant, the following behavior is guaranteed:
+
+- The exchange **never revokes the input tokens**. A successful exchange
+  leaves the ``subject_token`` and ``actor_token`` valid. If your policy needs
+  single-use semantics, revoke the token yourself from
+  :meth:`validate_subject_token` or from storage.
+- An exchange without an ``actor_token`` is allowed by default, for
+  identity-preserving exchanges. Set
+  :attr:`TokenExchangeGrant.REQUIRE_ACTOR_TOKEN` to ``True`` in a subclass to
+  require an explicit acting party on every exchange.
+- No refresh token is issued.
+- A failure while generating or saving the token is returned as a standard
+  OAuth 2.0 error response; the client never receives a partial success.
+
+API Reference
+-------------
+
+.. autoclass:: TokenExchangeGrant
+    :member-order: bysource
+    :members:
+
+.. autoclass:: TokenInfo
+    :member-order: bysource
+    :members:
+
+.. autoclass:: Principal
+    :member-order: bysource
+    :members:
+
+.. autoclass:: DelegationDecision
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InvalidTargetError
+    :member-order: bysource
+    :members:
