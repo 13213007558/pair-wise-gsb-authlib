@@ -19,6 +19,7 @@ Specifications
     rfc9101
     rfc9207
     rfc9470
+    rfc9449
     rfc9728
     multiple-response-types
     form-post

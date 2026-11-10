@@ -36,3 +36,4 @@ Reference
 
 * :doc:`../specs/rfc6750` — Bearer Token Usage
 * :doc:`../specs/rfc7662` — Token Introspection
+* :doc:`../specs/rfc9449` — DPoP Proof of Possession

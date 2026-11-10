@@ -1,0 +1,144 @@
+.. _specs/rfc9449:
+
+RFC 9449: OAuth 2.0 Demonstrating Proof of Possession (DPoP)
+=============================================================
+
+.. meta::
+    :description: Python API reference for RFC 9449 DPoP on the resource
+        server with Authlib, including proof validation, key binding, nonce
+        challenges and replay protection.
+
+.. module:: authlib.oauth2.rfc9449
+
+This section contains the resource server implementation of :rfc:`9449`.
+DPoP binds an access token to a client-held asymmetric key. The token carries
+a ``cnf.jkt`` thumbprint, and every request presents a DPoP proof JWT signed
+with the corresponding private key. The resource server verifies that the
+proof is valid, that it targets this exact request, and that its key matches
+the token binding.
+
+The authorization server side of DPoP (issuing DPoP-bound tokens) is not
+implemented yet. Authlib expects the existing token validator to return the
+token metadata, including the ``cnf`` claim.
+
+Enforcing DPoP
+--------------
+
+:class:`DPoPProtector` is an extension of
+:class:`~authlib.oauth2.rfc6749.ResourceProtector`. Register it together with
+the usual bearer token validator:
+
+.. code-block:: python
+
+    from authlib.integrations.flask_oauth2 import ResourceProtector
+    from authlib.oauth2.rfc6750 import BearerTokenValidator
+    from authlib.oauth2.rfc9449 import DPoPProtector
+
+    class MyBearerTokenValidator(BearerTokenValidator):
+        def authenticate_token(self, token_string):
+            return Token.query.filter_by(access_token=token_string).first()
+
+    require_oauth = ResourceProtector()
+    require_oauth.register_token_validator(MyBearerTokenValidator())
+    require_oauth.register_extension(DPoPProtector())
+
+Requests using the ``Authorization: DPoP <token>`` scheme reuse the bearer
+token validator to load the token, then the extension validates the proof.
+A token that carries a ``cnf.jkt`` cannot be used with the plain ``Bearer``
+scheme: a failed DPoP check always returns an error and is never downgraded to
+bearer access.
+
+Proof validation
+----------------
+
+:class:`DPoPProofValidator` implements the checks of :rfc:`9449#section-4.3`:
+
+* the ``typ`` header is ``dpop+jwt`` and the ``alg`` is an accepted
+  asymmetric algorithm (symmetric algorithms such as ``HS256`` are rejected);
+* the public ``jwk`` header is an asymmetric public key and the JWT signature
+  verifies with it;
+* the ``htm`` claim equals the HTTP method of the request;
+* the ``htu`` claim equals the request URL without its query and fragment;
+* the ``iat`` claim is inside the accepted time window;
+* the ``ath`` claim is the SHA-256 hash of the presented access token;
+* the public key thumbprint matches the token ``cnf.jkt``.
+
+The accepted algorithms, the time window (``leeway`` and ``max_age``) and the
+clock are configurable. A fixed clock is useful in tests:
+
+.. code-block:: python
+
+    from authlib.oauth2.rfc9449 import DPoPProofValidator, InMemoryReplayStore
+
+    proof_validator = DPoPProofValidator(
+        leeway=30,
+        max_age=120,
+        clock=lambda: fixed_time,
+        replay_store=InMemoryReplayStore(clock=lambda: fixed_time),
+    )
+    require_oauth.register_extension(
+        DPoPProtector(proof_validator=proof_validator)
+    )
+
+Trusted request URL
+~~~~~~~~~~~~~~~~~~~
+
+The ``htu`` comparison uses ``request.uri``, which the framework builds from
+the request line and its own server configuration. Forwarding headers such as
+``X-Forwarded-Host`` are not read directly: they are only trustworthy once the
+deployment explicitly configures the framework to process them, for example
+with Werkzeug's ``ProxyFix``. Override
+:meth:`DPoPProtector.get_request_url` to supply a canonical URL another way.
+
+Nonces
+------
+
+A resource server can require a server nonce. Pass a ``nonce_generator`` and
+an ``expected_nonce`` callable:
+
+.. code-block:: python
+
+    require_oauth.register_extension(
+        DPoPProtector(
+            nonce_generator=lambda: store.fresh_nonce(),
+            expected_nonce=lambda request: store.current_nonce(),
+        )
+    )
+
+When the proof does not carry the expected nonce, the server answers with
+HTTP 401, the ``use_dpop_nonce`` error and a ``DPoP-Nonce`` header. The client
+retries with that nonce in the proof.
+
+Replay protection
+-----------------
+
+A proof ``jti`` is accepted only once within its time window. The storage is
+defined by the :class:`ReplayStore` protocol, whose ``check_and_store`` method
+must be atomic. :class:`InMemoryReplayStore` provides a thread-safe in-memory
+implementation: concurrent requests with the same valid ``jti`` pass exactly
+once, and a proof that fails any other validation never reserves its
+identifier.
+
+API Reference
+-------------
+
+.. autoclass:: DPoPProtector
+   :members:
+
+.. autoclass:: DPoPProofValidator
+   :members:
+
+.. autoclass:: DPoPProof
+   :members:
+
+.. autoclass:: ReplayStore
+   :members:
+
+.. autoclass:: InMemoryReplayStore
+   :members:
+
+.. autofunction:: compute_ath
+
+.. autofunction:: normalize_url
+
+.. autofunction:: get_token_confirmation_jkt
