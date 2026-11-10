@@ -1,0 +1,10 @@
+Added
+~~~~~
+
+- Support OAuth 2.0 Pushed Authorization Requests (:rfc:`9126`) with the
+  ``authlib.oauth2.rfc9126`` module. Clients push their authorization
+  request parameters to the new ``PushedAuthorizationRequestEndpoint`` and
+  receive a short-lived ``request_uri`` that the
+  ``PushedAuthorizationRequest`` extension resolves on the authorization
+  endpoint. The reference storage is an application interface; a
+  thread-safe in-memory implementation is provided.

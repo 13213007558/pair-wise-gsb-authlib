@@ -60,6 +60,7 @@ Generic, spec-compliant implementation to build clients and providers:
   - [RFC8628: OAuth 2.0 Device Authorization Grant](https://docs.authlib.org/en/stable/oauth2/specs/rfc8628.html)
   - [RFC9068: JSON Web Token (JWT) Profile for OAuth 2.0 Access Tokens](https://docs.authlib.org/en/stable/oauth2/specs/rfc9068.html)
   - [RFC9101: The OAuth 2.0 Authorization Framework: JWT-Secured Authorization Request (JAR)](https://docs.authlib.org/en/stable/oauth2/specs/rfc9101.html)
+  - [RFC9126: OAuth 2.0 Pushed Authorization Requests](https://docs.authlib.org/en/stable/oauth2/specs/rfc9126.html)
   - [RFC9207: OAuth 2.0 Authorization Server Issuer Identification](https://docs.authlib.org/en/stable/oauth2/specs/rfc9207.html)
   - [RFC9728: OAuth 2.0 Protected Resource Metadata](https://docs.authlib.org/en/stable/oauth2/specs/rfc9728.html)
   - [OAuth 2.0 Multiple Response Type Encoding Practices](https://docs.authlib.org/en/stable/oauth2/specs/multiple-response-types.html)

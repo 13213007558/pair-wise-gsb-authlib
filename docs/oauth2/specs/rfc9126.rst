@@ -1,0 +1,112 @@
+.. _specs/rfc9126:
+
+RFC 9126: OAuth 2.0 Pushed Authorization Requests
+==================================================
+
+This section contains the generic implementation of :rfc:`9126`.
+
+Instead of putting the whole authorization request in the browser URL, the
+client pushes its parameters to the authorization server first, and gets back
+a ``request_uri`` with a limited lifetime. The browser then only carries the
+``client_id`` and the ``request_uri`` reference:
+
+.. mermaid::
+
+    sequenceDiagram
+        autonumber
+        participant User as User's browser<br/>(User Agent)
+        participant Client
+        box rgba(80, 120, 220, 0.12) PushedAuthorizationRequest
+            participant AS as Authorization Server
+        end
+
+        Client->>AS: POST /par (authorization request parameters)
+        AS-->>Client: 201 Created + request_uri, expires_in
+        Client-->>User: 302 Found → /authorize
+        User->>AS: GET /authorize (client_id, request_uri)
+        Note over User,AS: The user logs in and approves
+        AS-->>User: 303 See Other → redirect_uri?code=…
+
+1. The client pushes the authorization request parameters to the pushed
+   authorization request endpoint, authenticating as at the token endpoint.
+   :class:`PushedAuthorizationRequestEndpoint` validates the client and the
+   parameters that can be checked before the user is involved.
+2. The server stores the verified parameters and returns a ``request_uri``
+   reference and its lifetime.
+3. The client redirects the browser to the authorization endpoint with only
+   the reference.
+4. The :class:`PushedAuthorizationRequest` extension resolves the reference
+   and restores the pushed parameters. Parameters added to the browser URL
+   cannot override the verified content. Displaying the login or consent
+   page does not consume the reference.
+5. The final authorization response consumes the reference: it can only be
+   committed once, and concurrent requests cannot each get an authorization
+   code. A failure before the response is created releases the reference,
+   so that the application can allow short-term retries.
+
+The ``/par`` and ``/authorize`` paths are examples.
+
+Usage
+-----
+
+The endpoint and the authorization endpoint extension share a reference
+store. Authlib provides a thread-safe in-memory store; applications can
+implement the same storage interface on their own backend, no extra
+database or background service is required:
+
+.. code-block:: python
+
+    from authlib.oauth2 import rfc9126
+
+    store = rfc9126.InMemoryPushedAuthorizationRequestStore()
+    authorization_server.register_extension(
+        rfc9126.PushedAuthorizationRequest(store)
+    )
+    authorization_server.register_endpoint(
+        rfc9126.PushedAuthorizationRequestEndpoint(store, expires_in=60)
+    )
+
+    @app.route("/oauth/par", methods=["POST"])
+    def pushed_authorization_request():
+        return authorization_server.create_endpoint_response(
+            "pushed_authorization_request"
+        )
+
+A reference belongs to the client that pushed it: the authorization
+endpoint rejects a ``request_uri`` presented by another client. Pushed
+authorization requests can be enforced for all clients with the
+``require_pushed_authorization_requests`` server metadata, or per client
+with the ``require_pushed_authorization_requests`` client metadata.
+
+When the :ref:`specs/rfc9101` extension is also used, register the PAR
+extension first, so that a pushed ``request`` object is restored before
+its signature is verified.
+
+API Reference
+-------------
+
+.. module:: authlib.oauth2.rfc9126
+
+.. autoclass:: PushedAuthorizationRequest
+    :member-order: bysource
+    :members:
+
+.. autoclass:: PushedAuthorizationRequestEndpoint
+    :member-order: bysource
+    :members:
+
+.. autoclass:: PushedAuthorizationRequestData
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InMemoryPushedAuthorizationRequestStore
+    :member-order: bysource
+    :members:
+
+.. autoclass:: ClientMetadataClaims
+    :member-order: bysource
+    :members:
+
+.. autoclass:: AuthorizationServerMetadata
+    :member-order: bysource
+    :members:
