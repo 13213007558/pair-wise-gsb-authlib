@@ -138,14 +138,88 @@ But first, we need to implement the missing methods:
             user = User.query.get(user_id)
             return user, allowed == '1'
 
-        def should_slow_down(self, credential):
-            # developers can return True/False based on credential
-            return False
+        def get_polling_store(self):
+            return redis_polling_store
 
     authorization_server.register_grant(MyDeviceCodeGrant)
 
 Note ``query_user_grant``, we are fetching data from redis. This data
 was saved from verification endpoint when end user granted the request.
+
+Polling state contract
+~~~~~~~~~~~~~~~~~~~~~~
+
+While the user has not answered, the device polls the token endpoint every
+``interval`` seconds. Authlib combines every check for one poll into the
+:class:`DevicePollingStore` contract, so the storage backend can execute it
+atomically:
+
+.. autoclass:: DevicePollingStore
+    :members:
+
+.. autoclass:: PollingAdvance
+    :members:
+
+.. autoclass:: PollingVerdict
+    :members:
+
+The grant resolves each poll in a fixed order, independent of the order in
+which the storage callbacks happen to run:
+
+1. an expired ``device_code`` returns ``expired_token``;
+2. a ``device_code`` that already produced an access token returns
+   ``invalid_grant``, so one grant cannot be consumed twice;
+3. a saved user decision is terminal: denial returns ``access_denied`` and
+   approval returns the user. The decision is checked *before* the rate
+   limit, so a poll that arrives too early still gets the token when the
+   user approved at exactly the same time;
+4. otherwise the poll is rate-limited atomically. An early poll returns
+   ``slow_down`` and the interval grows by :data:`SLOW_DOWN_STEP` (5)
+   seconds for this and every later poll; any other poll returns
+   ``authorization_pending``.
+
+Because :meth:`DevicePollingStore.check_and_advance` reads and writes the
+state in one operation, two polls that arrive at the same time cannot both
+be admitted against the old interval: one is admitted, the other gets
+``slow_down``. A relational database serializes the operation with a row
+lock; a Redis backend typically implements it with a Lua script.
+
+The clock is injected and defaults to :func:`time.monotonic`, which makes
+the state machine deterministic in tests without waiting real seconds:
+
+.. code-block:: python
+
+    from authlib.oauth2.rfc8628 import DeviceCodeGrant
+    from authlib.oauth2.rfc8628 import InMemoryDevicePollingStore
+
+    class MyDeviceCodeGrant(DeviceCodeGrant):
+        def __init__(self, request, server):
+            super().__init__(request, server, clock=my_clock)
+
+        def get_polling_store(self):
+            return InMemoryDevicePollingStore(clock=my_clock)
+
+:class:`InMemoryDevicePollingStore` is the reference implementation. It is
+thread-safe and suitable for a single-process server and for tests; a
+multi-process deployment needs a shared backend implementing the same
+contract.
+
+Migrating from ``should_slow_down``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Older applications only implemented ``should_slow_down`` and tracked the
+interval themselves. That hook still works: when :meth:`get_polling_store`
+returns ``None`` (its default), the grant falls back to the old behavior and
+emits a deprecation warning. The compatibility boundary is therefore:
+
+- no store, ``should_slow_down`` implemented: legacy behavior, deprecated;
+- a store returned from :meth:`get_polling_store`: the contract enforces the
+  interval, the ``slow_down`` increase and single use of a device code, and
+  ``should_slow_down`` is never called.
+
+Migrate by moving the polling timestamps and interval into a
+:class:`DevicePollingStore` and returning it from :meth:`get_polling_store`;
+the other methods of the grant do not change.
 
 Verification Endpoint
 ---------------------
@@ -187,3 +261,19 @@ API Reference
     :member-order: bysource
     :members:
     :inherited-members:
+
+.. autoclass:: InMemoryDevicePollingStore
+    :member-order: bysource
+    :members:
+
+.. autoclass:: DeviceCredentialMixin
+    :members:
+
+.. autoclass:: DeviceCredentialDict
+    :members:
+
+.. autoexception:: AuthorizationPendingError
+
+.. autoexception:: SlowDownError
+
+.. autoexception:: ExpiredTokenError

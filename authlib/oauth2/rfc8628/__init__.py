@@ -15,6 +15,12 @@ from .errors import ExpiredTokenError
 from .errors import SlowDownError
 from .models import DeviceCredentialDict
 from .models import DeviceCredentialMixin
+from .polling import DEFAULT_INTERVAL
+from .polling import SLOW_DOWN_STEP
+from .polling import DevicePollingStore
+from .polling import InMemoryDevicePollingStore
+from .polling import PollingAdvance
+from .polling import PollingVerdict
 
 __all__ = [
     "DeviceAuthorizationEndpoint",
@@ -25,4 +31,10 @@ __all__ = [
     "AuthorizationPendingError",
     "SlowDownError",
     "ExpiredTokenError",
+    "DevicePollingStore",
+    "InMemoryDevicePollingStore",
+    "PollingAdvance",
+    "PollingVerdict",
+    "DEFAULT_INTERVAL",
+    "SLOW_DOWN_STEP",
 ]

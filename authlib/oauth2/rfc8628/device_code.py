@@ -1,14 +1,20 @@
 import logging
+import time
+
+from authlib.deprecate import deprecate
 
 from ..rfc6749 import BaseGrant
 from ..rfc6749 import JsonResponse
 from ..rfc6749 import TokenEndpointMixin
 from ..rfc6749.errors import AccessDeniedError
+from ..rfc6749.errors import InvalidGrantError
 from ..rfc6749.errors import InvalidRequestError
 from ..rfc6749.errors import UnauthorizedClientError
 from .errors import AuthorizationPendingError
 from .errors import ExpiredTokenError
 from .errors import SlowDownError
+from .polling import DEFAULT_INTERVAL
+from .polling import PollingVerdict
 
 log = logging.getLogger(__name__)
 DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
@@ -61,6 +67,10 @@ class DeviceCodeGrant(BaseGrant, TokenEndpointMixin):
 
     GRANT_TYPE = DEVICE_CODE_GRANT_TYPE
     TOKEN_ENDPOINT_AUTH_METHODS = ["client_secret_basic", "client_secret_post", "none"]
+
+    def __init__(self, request, server, *, clock=time.monotonic):
+        super().__init__(request, server)
+        self._clock = clock
 
     def validate_token_request(self):
         """After displaying instructions to the user, the client creates an
@@ -129,9 +139,55 @@ class DeviceCodeGrant(BaseGrant, TokenEndpointMixin):
         return JsonResponse(token, headers=self.TOKEN_RESPONSE_HEADER)
 
     def validate_device_credential(self, credential):
+        """Resolve one poll into a user or an RFC 8628 error.
+
+        The decision order is fixed and does not depend on the order in which
+        storage callbacks happen to run:
+
+        1. an expired ``device_code`` produces ``expired_token``;
+        2. a device code that already produced a token produces
+           ``invalid_grant``, so a grant cannot be consumed twice;
+        3. a saved user decision is terminal: denial is ``access_denied`` and
+           approval returns the user -- approval is checked *before* the
+           rate limit, so a poll that is too early still gets the token when
+           the user approved at exactly the same time;
+        4. otherwise the poll is rate-limited atomically: an early poll
+           produces ``slow_down`` and any other poll
+           ``authorization_pending``.
+        """
+        device_code = self.request.payload.data.get("device_code")
         if credential.is_expired():
             raise ExpiredTokenError()
 
+        store = self.get_polling_store()
+        if store is None:
+            return self._validate_device_credential_legacy(credential)
+
+        now = self._clock()
+        interval = self.get_polling_interval(credential)
+        advance = store.check_and_advance(device_code, interval, now=now)
+        if advance.consumed:
+            raise InvalidGrantError("The 'device_code' has already been used")
+
+        user_grant = self.query_user_grant(credential.get_user_code())
+        if user_grant is not None:
+            user, approved = user_grant
+            if not approved:
+                raise AccessDeniedError()
+            store.mark_consumed(device_code, now=now)
+            return user
+
+        if advance.verdict is PollingVerdict.TOO_SOON:
+            raise SlowDownError()
+        raise AuthorizationPendingError()
+
+    def _validate_device_credential_legacy(self, credential):
+        deprecate(
+            "DeviceCodeGrant.should_slow_down is deprecated; implement "
+            "get_polling_store() with a DevicePollingStore instead.",
+            version="1.11",
+            stacklevel=4,
+        )
         user_code = credential.get_user_code()
         user_grant = self.query_user_grant(user_code)
 
@@ -145,6 +201,41 @@ class DeviceCodeGrant(BaseGrant, TokenEndpointMixin):
             raise SlowDownError()
 
         raise AuthorizationPendingError()
+
+    def get_polling_store(self):
+        """Return the :class:`~authlib.oauth2.rfc8628.DevicePollingStore`
+        that holds the polling state of device codes, or ``None``.
+
+        Returning ``None`` (the default) keeps the deprecated
+        :meth:`should_slow_down` hook working. New implementations return a
+        store, typically a shared one such as a Redis-backed one, and let the
+        grant enforce the polling interval and single use of a device code::
+
+            class MyDeviceCodeGrant(DeviceCodeGrant):
+                def get_polling_store(self):
+                    return redis_polling_store
+        """
+        return None
+
+    def get_polling_interval(self, credential):
+        """The interval in seconds currently advertised to the client.
+
+        It defaults to the ``interval`` saved with the credential, or to
+        :data:`~authlib.oauth2.rfc8628.polling.DEFAULT_INTERVAL`. The store
+        only ever increases it, by
+        :data:`~authlib.oauth2.rfc8628.polling.SLOW_DOWN_STEP` seconds after
+        each ``slow_down`` response.
+        """
+        interval = getattr(credential, "get_interval", None)
+        if interval is not None:
+            value = interval()
+            if value is not None:
+                return float(value)
+        if isinstance(credential, dict):
+            value = credential.get("interval")
+            if value is not None:
+                return float(value)
+        return float(DEFAULT_INTERVAL)
 
     def query_device_credential(self, device_code):
         """Get device credential from previously savings via ``DeviceAuthorizationEndpoint``.
@@ -177,8 +268,16 @@ class DeviceCodeGrant(BaseGrant, TokenEndpointMixin):
         raise NotImplementedError()
 
     def should_slow_down(self, credential):
-        """The authorization request is still pending and polling should
+        """Deprecated migration hook.
+
+        The authorization request is still pending and polling should
         continue, but the interval MUST be increased by 5 seconds for this
         and all subsequent requests.
+
+        This hook is only called when :meth:`get_polling_store` returns
+        ``None``; relying on it emits a deprecation warning. New code returns
+        a :class:`~authlib.oauth2.rfc8628.DevicePollingStore` from
+        :meth:`get_polling_store`, which enforces the interval, the
+        ``slow_down`` increase and single use of a device code atomically.
         """
         raise NotImplementedError()
