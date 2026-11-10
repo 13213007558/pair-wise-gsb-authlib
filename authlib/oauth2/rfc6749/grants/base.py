@@ -74,6 +74,7 @@ class BaseGrant(Hookable):
         grant_type=None,
         expires_in=None,
         include_refresh_token=True,
+        resource=None,
     ):
         if grant_type is None:
             grant_type = self.GRANT_TYPE
@@ -84,6 +85,7 @@ class BaseGrant(Hookable):
             scope=scope,
             expires_in=expires_in,
             include_refresh_token=include_refresh_token,
+            resource=resource,
         )
 
     def authenticate_token_endpoint_client(self):
@@ -166,6 +168,7 @@ class AuthorizationEndpointMixin(Hookable):
     }
 
     _extension_authorization_parameters = {}
+    _extension_repeated_authorization_parameters = frozenset()
 
     @property
     def authorization_parameters(self):
@@ -177,18 +180,35 @@ class AuthorizationEndpointMixin(Hookable):
             **self._extension_authorization_parameters,
         }
 
-    def register_authorization_parameters(self, parameters):
+    @property
+    def repeated_authorization_parameters(self):
+        """The authorization request parameters that may be sent more than
+        once, such as the ``resource`` parameter of :rfc:`8707`."""
+        return (
+            self.server.repeated_authorization_parameters
+            | self._extension_repeated_authorization_parameters
+        )
+
+    def register_authorization_parameters(self, parameters, repeated=()):
         """Add authorization request parameters to this grant. A grant
         extension calls it with the parameters it introduces::
 
             grant.register_authorization_parameters({"code_challenge": str})
 
+        Parameters that the client may send several times, such as the
+        ``resource`` parameter of :rfc:`8707`, are passed in ``repeated`` so
+        they are exempt from the single-value check of RFC 6749 §3.1.
+
         :param parameters: a dict of parameter names and JSON types
+        :param repeated: the names of the parameters that may repeat
         """
         self._extension_authorization_parameters = {
             **self._extension_authorization_parameters,
             **parameters,
         }
+        self._extension_repeated_authorization_parameters = (
+            self._extension_repeated_authorization_parameters | frozenset(repeated)
+        )
 
     @classmethod
     def check_authorization_endpoint(cls, request: OAuth2Request):
@@ -230,9 +250,16 @@ class AuthorizationEndpointMixin(Hookable):
         """For the Authorization Endpoint, request and response parameters MUST NOT be included
         more than once. Per :rfc:`6749#section-3.1`.
 
-        It checks the parameters in :attr:`authorization_parameters`.
+        It checks the parameters in :attr:`authorization_parameters`, except
+        those in :attr:`repeated_authorization_parameters` which another
+        specification allows to repeat.
         """
-        validate_no_repeated_parameter(request, self.authorization_parameters)
+        parameters = [
+            name
+            for name in self.authorization_parameters
+            if name not in self.repeated_authorization_parameters
+        ]
+        validate_no_repeated_parameter(request, parameters)
 
     def get_authorization_key(self):
         """Return a hash of the authorization request parameters.

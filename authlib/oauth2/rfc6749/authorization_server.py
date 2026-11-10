@@ -1,3 +1,4 @@
+import inspect
 from functools import partial
 
 from authlib.common.errors import ContinueIteration
@@ -48,6 +49,7 @@ class AuthorizationServer(Hookable):
         self._endpoints = {}
         self._extensions = []
         self._authorization_parameters = {}
+        self._repeated_authorization_parameters = frozenset()
 
     def query_client(self, client_id):
         """Query OAuth client by client_id. The client model class MUST
@@ -68,6 +70,7 @@ class AuthorizationServer(Hookable):
         scope=None,
         expires_in=None,
         include_refresh_token=True,
+        resource=None,
     ):
         """Generate the token dict.
 
@@ -77,6 +80,9 @@ class AuthorizationServer(Hookable):
         :param expires_in: if provided, use this value as expires_in.
         :param scope: current requested scope.
         :param include_refresh_token: should refresh_token be included.
+        :param resource: the resource indicators authorized for the token, as
+            a list of absolute URIs. It is passed to generators that accept
+            it, such as a JWT generator that builds its ``aud`` claim.
         :return: Token dict
         """
         # generator for a specified grant type
@@ -87,14 +93,18 @@ class AuthorizationServer(Hookable):
         if not func:
             raise RuntimeError("No configured token generator")
 
-        return func(
-            grant_type=grant_type,
-            client=client,
-            user=user,
-            scope=scope,
-            expires_in=expires_in,
-            include_refresh_token=include_refresh_token,
-        )
+        kwargs = {
+            "grant_type": grant_type,
+            "client": client,
+            "user": user,
+            "scope": scope,
+            "expires_in": expires_in,
+            "include_refresh_token": include_refresh_token,
+        }
+        if resource is not None and _generator_accepts_resource(func):
+            kwargs["resource"] = list(resource)
+
+        return func(**kwargs)
 
     def register_token_generator(self, grant_type, func):
         """Register a function as token generator for the given ``grant_type``.
@@ -174,15 +184,23 @@ class AuthorizationServer(Hookable):
         extension(self)
         self._extensions.append(extension)
 
-    def register_authorization_parameters(self, parameters):
+    def register_authorization_parameters(self, parameters, repeated=()):
         """Add authorization request parameters to all the grants. A server
         extension calls it with the parameters it introduces::
 
             server.register_authorization_parameters({"response_mode": str})
 
+        Parameters that the client may send several times are passed in
+        ``repeated``, so they are exempt from the single-value check of
+        RFC 6749 §3.1.
+
         :param parameters: a dict of parameter names and JSON types
+        :param repeated: the names of the parameters that may repeat
         """
         self._authorization_parameters.update(parameters)
+        self._repeated_authorization_parameters = (
+            self._repeated_authorization_parameters | frozenset(repeated)
+        )
 
     @property
     def authorization_parameters(self):
@@ -193,6 +211,12 @@ class AuthorizationServer(Hookable):
             **AuthorizationEndpointMixin.AUTHORIZATION_PARAMETERS,
             **self._authorization_parameters,
         }
+
+    @property
+    def repeated_authorization_parameters(self):
+        """The authorization request parameters that may be sent more than
+        once."""
+        return self._repeated_authorization_parameters
 
     def get_error_uri(self, request, error):
         """Return a URI for the given error, framework may implement this method."""
@@ -320,7 +344,12 @@ class AuthorizationServer(Hookable):
         grant = None
         try:
             request.user = end_user
-            validate_no_repeated_parameter(request, self.authorization_parameters)
+            parameters = [
+                name
+                for name in self.authorization_parameters
+                if name not in self.repeated_authorization_parameters
+            ]
+            validate_no_repeated_parameter(request, parameters)
 
             grant = self.get_authorization_grant(request)
             grant.authorization_session = session
@@ -583,6 +612,17 @@ def _create_grant(grant_cls, extensions, request, server):
         for ext in extensions:
             ext(grant)
     return grant
+
+
+def _generator_accepts_resource(func):
+    """Tell if a token generator accepts the ``resource`` keyword."""
+    parameters = inspect.signature(func).parameters
+    if "resource" in parameters:
+        return True
+    return any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
 
 
 def _check_error_redirect(session, request, error):

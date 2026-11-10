@@ -142,7 +142,42 @@ class JWTBearerTokenGenerator(BearerTokenGenerator):
         """
         return generate_token(16)
 
-    def access_token_generator(self, client, grant_type, user, scope):
+    def generate(
+        self,
+        grant_type,
+        client,
+        user=None,
+        scope=None,
+        expires_in=None,
+        include_refresh_token=True,
+        resource=None,
+    ):
+        scope = self.get_allowed_scope(client, scope)
+        access_token = self.access_token_generator(
+            client=client,
+            grant_type=grant_type,
+            user=user,
+            scope=scope,
+            resource=resource,
+        )
+        if expires_in is None:
+            expires_in = self._get_expires_in(client, grant_type)
+
+        token = {
+            "token_type": "Bearer",
+            "access_token": access_token,
+        }
+        if expires_in:
+            token["expires_in"] = expires_in
+        if include_refresh_token and self.refresh_token_generator:
+            token["refresh_token"] = self.refresh_token_generator(
+                client=client, grant_type=grant_type, user=user, scope=scope
+            )
+        if scope:
+            token["scope"] = scope
+        return token
+
+    def access_token_generator(self, client, grant_type, user, scope, resource=None):
         now = int(time.time())
         expires_in = now + self._get_expires_in(client, grant_type)
 
@@ -171,12 +206,10 @@ class JWTBearerTokenGenerator(BearerTokenGenerator):
             token_data["sub"] = client.get_client_id()
 
         # If the request includes a 'resource' parameter (as defined in [RFC8707]), the
-        # resulting JWT access token 'aud' claim SHOULD have the same value as the
+        # resulting JWT access token 'aud' claim has the same value as the
         # 'resource' parameter in the request.
-
-        # TODO: Implement this with RFC8707
-        if False:  # pragma: no cover
-            ...
+        if resource:
+            token_data["aud"] = resource
 
         # If the request does not include a 'resource' parameter, the authorization
         # server MUST use a default resource indicator in the 'aud' claim. If a 'scope'
@@ -191,7 +224,6 @@ class JWTBearerTokenGenerator(BearerTokenGenerator):
         # If the values in the 'scope' parameter refer to different default resource
         # indicator values, the authorization server SHOULD reject the request with
         # 'invalid_scope' as described in Section 4.1.2.1 of [RFC6749].
-        # TODO: Implement this with RFC8707
 
         if auth_time := self.get_auth_time(user):
             token_data["auth_time"] = auth_time

@@ -1,0 +1,162 @@
+.. _specs/rfc8707:
+
+RFC 8707: Resource Indicators for OAuth 2.0
+===========================================
+
+This section contains the generic implementation of :rfc:`8707`. A resource
+indicator is an absolute URI without a fragment component that identifies a
+resource. The identifier only names the resource: the authorization server
+never accesses the address.
+
+A request can carry several ``resource`` parameters, for instance at the
+authorization endpoint::
+
+    GET /authorize?response_type=code
+        &client_id=s6BhdRkqt3
+        &resource=https%3A%2F%2Fapi.example.com%2Fnetwork
+        &resource=https%3A%2F%2Fapi.example.com%2Fstorage
+        &redirect_uri=...
+
+The authorization server keeps every value, validates each one, and binds the
+whole set to the authorization code.
+
+Registering the extension
+-------------------------
+
+:class:`~authlib.oauth2.rfc8707.ResourceIndicators` is a grant extension.
+Register it on the authorization code grant and, to refresh tokens with
+resources, on the refresh token grant:
+
+.. code-block:: python
+
+    from authlib.oauth2.rfc8707 import ResourceIndicators
+
+    authorization_server.register_grant(
+        AuthorizationCodeGrant, [ResourceIndicators()]
+    )
+    authorization_server.register_grant(
+        RefreshTokenGrant, [ResourceIndicators()]
+    )
+
+Storing the resources
+~~~~~~~~~~~~~~~~~~~~~
+
+The extension puts the validated list on ``request.resources``. Save it with
+the authorization code, next to the scope:
+
+.. code-block:: python
+
+    def save_authorization_code(self, code, request):
+        return AuthorizationCode(
+            code=code,
+            client_id=request.client.client_id,
+            redirect_uri=request.payload.redirect_uri,
+            scope=request.scope,
+            user_id=request.user.id,
+            resources=request.resources,
+        )
+
+The authorization code and the token models expose the stored set through
+``get_resources``. The SQLAlchemy integration provides a JSON ``resources``
+column on both
+:class:`~authlib.integrations.sqla_oauth2.OAuth2AuthorizationCodeMixin` and
+:class:`~authlib.integrations.sqla_oauth2.OAuth2TokenMixin`.
+
+Exchanging the code
+~~~~~~~~~~~~~~~~~~~
+
+At the token endpoint, the client may repeat ``resource`` to select a subset
+of the indicators bound to the code. A value that was not authorized is
+rejected with the ``invalid_target`` error. When the parameter is omitted,
+the whole set of the code is used.
+
+The final set is stored on the token. Override
+:meth:`~authlib.oauth2.rfc8707.ResourceIndicators.get_token_resources` so the
+refresh grant can read it.
+
+Refreshing a token
+~~~~~~~~~~~~~~~~~~
+
+A refresh request can only narrow the resources of the refresh token. Per
+:rfc:`RFC 8707 §2.2.1 <8707#section-2.2.1>`, it can never add a resource that
+was not in the original request. Without a ``resource`` parameter, the new
+token keeps the previous resources.
+
+Requests without a resource
+---------------------------
+
+By default, :class:`ResourceIndicators` rejects a request without a
+``resource`` parameter with ``invalid_target``. This makes the behavior
+explicit: a resource-aware server must not silently turn an empty request
+into a token with an arbitrary audience.
+
+For deployments that still accept the legacy, resource-less requests, set
+``allow_without_resource``:
+
+.. code-block:: python
+
+    ResourceIndicators(allow_without_resource=True)
+
+Such a request gets no resource indicator, and the token generator keeps its
+default behavior. The choice is made once on the server, not in a branch of
+the request handling.
+
+Writing the resources in a token
+---------------------------------
+
+The extension passes the final set to the token generator through its
+``resource`` keyword, but only when the generator accepts it. Generators with
+the legacy signature are called unchanged, so existing applications keep
+working.
+
+The :class:`~authlib.oauth2.rfc9068.JWTBearerTokenGenerator` puts the set in
+the ``aud`` claim of the JWT access token, per :rfc:`RFC 9068 §3.1.1
+<9068#section-3.1.1>`. A custom generator can use any token format:
+
+.. code-block:: python
+
+    def generate_bearer_token(
+        grant_type,
+        client,
+        user=None,
+        scope=None,
+        expires_in=None,
+        include_refresh_token=True,
+        resource=None,
+    ):
+        token = {"token_type": "Bearer", "access_token": create_token()}
+        if resource:
+            token["audience"] = resource
+        return token
+
+Restricting the resources of a client
+-------------------------------------
+
+Override
+:meth:`~authlib.oauth2.rfc8707.ResourceIndicators.validate_client_resource`
+to refuse an indicator that a client is not allowed to request:
+
+.. code-block:: python
+
+    class MyResourceIndicators(ResourceIndicators):
+        def validate_client_resource(self, client, resource):
+            return resource in client.allowed_resources
+
+A refused indicator is rejected with ``invalid_target``.
+
+API Reference
+-------------
+
+.. module:: authlib.oauth2.rfc8707
+
+.. autoclass:: ResourceIndicators
+    :member-order: bysource
+    :members:
+
+.. autoclass:: InvalidTargetError
+    :member-order: bysource
+    :members:
+
+.. autofunction:: validate_resource_indicator
+
+.. autofunction:: get_resource_indicators

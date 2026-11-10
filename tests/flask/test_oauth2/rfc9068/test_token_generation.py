@@ -303,3 +303,84 @@ def test_get_audiences_override(client, user, jwks, token_generator):
         )
 
     assert jwt.decode(access_token, jwks).claims["aud"] == resource
+
+
+def test_resource_indicators_become_the_audience(client, user, jwks, token_generator):
+    """Per RFC 8707, the aud claim equals the authorized resource indicators."""
+    resources = [
+        "https://resource-a.example.com/",
+        "https://resource-b.example.com/api",
+    ]
+    access_token = token_generator.access_token_generator(
+        client,
+        "authorization_code",
+        user,
+        "profile",
+        resource=resources,
+    )
+
+    assert jwt.decode(access_token, jwks).claims["aud"] == resources
+
+
+def test_default_audience_without_resource(client, user, jwks, token_generator):
+    """Without a resource indicator, the configured default audience is used."""
+    access_token = token_generator.access_token_generator(
+        client, "authorization_code", user, "profile"
+    )
+
+    assert jwt.decode(access_token, jwks).claims["aud"] == resource
+
+
+def test_jwt_audience_from_resource_indicators(
+    app, server, test_client, user, client, jwks, db
+):
+    """End to end: the resources of the authorization code become the JWT aud."""
+    from authlib.oauth2.rfc8707 import ResourceIndicators
+
+    from ..models import AuthorizationCode
+    from ..models import CodeGrantMixin
+
+    class ResourceCodeGrant(CodeGrantMixin, _AuthorizationCodeGrant):
+        def save_authorization_code(self, code, request):
+            auth_code = AuthorizationCode(
+                code=code,
+                client_id=request.client.client_id,
+                redirect_uri=request.payload.redirect_uri,
+                scope=request.scope,
+                user_id=request.user.id,
+                resources=request.resources,
+            )
+            db.session.add(auth_code)
+            db.session.commit()
+            return auth_code
+
+    server._authorization_grants.clear()
+    server._token_grants.clear()
+    server.register_grant(ResourceCodeGrant, [ResourceIndicators()])
+
+    indicators = ["https://resource-a.example.com/", "https://resource-b.example.com/"]
+    res = test_client.post(
+        "/oauth/authorize?" + "&".join(f"resource={value}" for value in indicators),
+        data={
+            "response_type": client.response_types[0],
+            "client_id": client.client_id,
+            "redirect_uri": client.redirect_uris[0],
+            "scope": client.scope,
+            "user_id": user.id,
+        },
+    )
+    code = dict(url_decode(urlparse.urlparse(res.location).query))["code"]
+
+    res = test_client.post(
+        "/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": client.client_id,
+            "client_secret": client.client_secret,
+            "redirect_uri": client.redirect_uris[0],
+        },
+    )
+    assert res.status_code == 200, res.data
+    claims = jwt.decode(res.json["access_token"], jwks).claims
+    assert claims["aud"] == indicators

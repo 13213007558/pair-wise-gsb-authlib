@@ -1,5 +1,6 @@
 import time
 
+from sqlalchemy import JSON
 from sqlalchemy import Column
 from sqlalchemy import Integer
 from sqlalchemy import String
@@ -24,6 +25,9 @@ class OAuth2AuthorizationCodeMixin(AuthorizationCodeMixin):
     code_challenge = Column(Text)
     code_challenge_method = Column(String(48))
 
+    #: The resource indicators of :rfc:`8707` bound to the authorization code
+    resources = Column(JSON)
+
     def is_expired(self):
         return self.issued_at + 300 < time.time()
 
@@ -32,6 +36,9 @@ class OAuth2AuthorizationCodeMixin(AuthorizationCodeMixin):
 
     def get_scope(self):
         return self.scope
+
+    def get_resources(self):
+        return self.resources
 
     def get_auth_time(self):
         return self.auth_time
@@ -57,11 +64,17 @@ class OAuth2TokenMixin(TokenMixin):
     refresh_token_revoked_at = Column(Integer, nullable=False, default=0)
     expires_in = Column(Integer, nullable=False, default=0)
 
+    #: The resource indicators of :rfc:`8707` of the token
+    resources = Column(JSON)
+
     def check_client(self, client):
         return self.client_id == client.get_client_id()
 
     def get_scope(self):
         return self.scope
+
+    def get_resources(self):
+        return self.resources
 
     def get_expires_in(self):
         return self.expires_in

@@ -174,6 +174,20 @@ class AuthorizationCodeMixin:
         """
         raise NotImplementedError()
 
+    def get_resources(self):
+        """A method to get the resource indicators (:rfc:`8707`) bound to the
+        authorization code. For instance, a JSON column called
+        ``resources``::
+
+            def get_resources(self):
+                return self.resources
+
+        Only applications that use :rfc:`8707` need to implement it.
+
+        :return: a list of absolute URI strings, or ``None``
+        """
+        raise NotImplementedError()
+
 
 class TokenMixin:
     def check_client(self, client):
@@ -195,6 +209,21 @@ class TokenMixin:
                 return self.scope
 
         :return: scope string
+        """
+        raise NotImplementedError()
+
+    def get_resources(self):
+        """A method to get the resource indicators (:rfc:`8707`) stored with
+        the token. For instance, a JSON column called ``resources``::
+
+            def get_resources(self):
+                return self.resources
+
+        Only applications that use :rfc:`8707` need to implement it. The
+        refresh grant reads it to ensure a refresh request cannot add a
+        resource that was not previously authorized.
+
+        :return: a list of absolute URI strings, or ``None``
         """
         raise NotImplementedError()
 

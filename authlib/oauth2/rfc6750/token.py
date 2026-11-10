@@ -79,6 +79,7 @@ class BearerTokenGenerator:
         scope=None,
         expires_in=None,
         include_refresh_token=True,
+        resource=None,
     ):
         """Generate a bearer token for OAuth 2.0 authorization token endpoint.
 
@@ -88,6 +89,9 @@ class BearerTokenGenerator:
         :param expires_in: if provided, use this value as expires_in.
         :param scope: current requested scope.
         :param include_refresh_token: should refresh_token be included.
+        :param resource: the resource indicators (:rfc:`8707`) authorized for
+            the token, as a list of absolute URIs. The default opaque bearer
+            token does not use it, but a subclass can put it in its audience.
         :return: Token dict
         """
         scope = self.get_allowed_scope(client, scope)
@@ -119,7 +123,14 @@ class BearerTokenGenerator:
         scope=None,
         expires_in=None,
         include_refresh_token=True,
+        resource=None,
     ):
         return self.generate(
-            grant_type, client, user, scope, expires_in, include_refresh_token
+            grant_type,
+            client,
+            user,
+            scope,
+            expires_in,
+            include_refresh_token,
+            resource,
         )
